@@ -20,7 +20,13 @@ from microsoft_agents.activity import (
 from microsoft_agents.hosting.aiohttp import CloudAdapter
 from microsoft_agents.authentication.msal import MsalConnectionManager
 
-from agent_framework import AgentSession, tool, MCPStreamableHTTPTool
+from agent_framework import (
+    AgentSession,
+    FunctionInvocationContext,
+    MCPStreamableHTTPTool,
+    function_middleware,
+    tool,
+)
 from agent_framework.openai import OpenAIChatClient
 
 from config import Config
@@ -50,6 +56,30 @@ mcp_server = MCPStreamableHTTPTool(
     url="https://learn.microsoft.com/api/mcp",
 )
 
+
+@function_middleware
+async def inject_user_identity(context: FunctionInvocationContext, call_next):
+    """Make the caller's identity available to every tool invocation.
+
+    Tools can read it via `context.metadata["user_identity"]` (when invoked
+    through the framework) or by importing `get_current_user(session_id)`.
+    """
+    session = context.session
+    if session is not None:
+        identity = _session_users.get(session.session_id)
+        if identity is not None:
+            # `metadata` is a Mapping on the dataclass; create a fresh dict
+            # that merges any existing entries with our identity payload.
+            merged = dict(context.metadata or {})
+            merged["user_identity"] = identity
+            context.metadata = merged
+    await call_next()
+
+
+def get_current_user(session_id: str) -> dict[str, str | None] | None:
+    """Helper for tools that don't receive FunctionInvocationContext."""
+    return _session_users.get(session_id)
+
 # Build a Microsoft Agent Framework agent backed by Azure OpenAI's
 # Responses API (required for gpt-5.x family). `model` is the Azure
 # deployment name.
@@ -64,11 +94,40 @@ maf_agent = chat_client.as_agent(
     name="FutureCompleteAgent",
     instructions=system_prompt,
     tools=[get_day_of_week, get_trial_key, mcp_server],
+    middleware=[inject_user_identity],
 )
 
 # Keep one MAF AgentSession per Bot Framework conversation so multi-turn
 # context is preserved across messages.
 _sessions: dict[str, AgentSession] = {}
+
+# Per-session user identity captured from the channel activity. Keyed by
+# session_id so tools/middleware can look up "who is calling" without
+# touching TurnContext.
+_session_users: dict[str, dict[str, str | None]] = {}
+
+
+def _extract_user_identity(context: TurnContext) -> dict[str, str | None]:
+    """Pull the current user's identity from the inbound activity.
+
+    The values available depend on the channel:
+      * Teams: aad_object_id + tenant_id are populated; email/UPN requires
+        a Graph call or TeamsInfo.get_member().
+      * Playground / emulator: aad_object_id is usually None.
+    """
+    activity = context.activity
+    from_property = getattr(activity, "from_property", None)
+    conversation = getattr(activity, "conversation", None)
+    claims = context.identity  # bot/channel claims, not the user's
+
+    return {
+        "user_id": getattr(from_property, "id", None),
+        "user_name": getattr(from_property, "name", None),
+        "aad_object_id": getattr(from_property, "aad_object_id", None),
+        "tenant_id": getattr(conversation, "tenant_id", None),
+        "channel_id": getattr(activity, "channel_id", None),
+        "caller_app_id": claims.get_app_id() if claims else None,
+    }
 
 # Define storage and application
 storage = MemoryStorage()
@@ -94,6 +153,13 @@ async def on_message(context: TurnContext, _state: TurnState):
     if session is None:
         session = AgentSession(session_id=conversation_id)
         _sessions[conversation_id] = session
+        
+    # Capture/refresh the caller's identity for this session and stash it
+    # in the parallel _session_users store so tools/middleware can look up
+    # "who is calling" by session_id.
+    user_identity = _extract_user_identity(context)
+    _session_users[session.session_id] = user_identity
+    print(f"[session {session.session_id}] user identity: {user_identity}", file=sys.stderr)
 
     response = await maf_agent.run(context.activity.text or "", session=session)
 
