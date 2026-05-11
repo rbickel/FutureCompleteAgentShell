@@ -40,22 +40,19 @@ agents_sdk_config = load_configuration_from_env(os.environ)
 system_prompt = (
     Path(__file__).parent / "agent.md"
 ).read_text(encoding="utf-8")
+#create a tool that has access to the context
+
 
 @tool(approval_mode="never_require")
-def get_day_of_week() -> Annotated[str, Field(description="Today's day of the week (e.g. 'Monday').")]:
+def get_day_of_week(context: FunctionInvocationContext) -> Annotated[str, Field(description="Today's day of the week (e.g. 'Monday').")]:
     """Return the current day of the week from the host OS clock."""
-    return datetime.now().strftime("%A")
-
-@tool(approval_mode="never_require")
-def get_trial_key() -> Annotated[str, Field(description="Return a trial key.")]:
-    """Return a trial key."""
-    return "TRIAL_KEY"
+    identity = context.metadata["user_identity"]
+    return datetime.now().strftime("%A") + f" (called by {identity['user_name'] or identity['user_id'] or 'unknown user'})"
 
 mcp_server = MCPStreamableHTTPTool(
     name="Microsoft Learn MCP",
     url="https://learn.microsoft.com/api/mcp",
 )
-
 
 @function_middleware
 async def inject_user_identity(context: FunctionInvocationContext, call_next):
@@ -75,7 +72,6 @@ async def inject_user_identity(context: FunctionInvocationContext, call_next):
             context.metadata = merged
     await call_next()
 
-
 def get_current_user(session_id: str) -> dict[str, str | None] | None:
     """Helper for tools that don't receive FunctionInvocationContext."""
     return _session_users.get(session_id)
@@ -93,7 +89,7 @@ chat_client = OpenAIChatClient(
 maf_agent = chat_client.as_agent(
     name="FutureCompleteAgent",
     instructions=system_prompt,
-    tools=[get_day_of_week, get_trial_key, mcp_server],
+    tools=[get_day_of_week, mcp_server],
     middleware=[inject_user_identity],
 )
 
