@@ -77,8 +77,11 @@ def get_current_user(session_id: str) -> dict[str, str | None] | None:
     return _session_users.get(session_id)
 
 # Build a Microsoft Agent Framework agent backed by Azure OpenAI's
-# Responses API (required for gpt-5.x family). `model` is the Azure
-# deployment name.
+# Responses API. `OpenAIChatClient` targets `/responses` (not chat
+# completions) and stores conversations server-side by default
+# (`STORES_BY_DEFAULT = True`). Each turn only sends the new input and
+# is chained via `previous_response_id` / `conversation_id`, which the
+# AgentSession tracks for you.
 chat_client = OpenAIChatClient(
     model=config.azure_openai_deployment_name,
     api_key=config.azure_openai_api_key,
