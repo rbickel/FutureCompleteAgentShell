@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -363,6 +364,95 @@ def test_cancel_job_calls_session_cancel_endpoint(agent_module, fake_context, ac
     assert captured["path"] == "/v1/sessions/backtest-123/cancel"
     assert captured["required_capability"] == "backtest"
     assert agent_module._jobs_by_session[fake_context.session.session_id][0]["status"] == "cancelled"
+
+
+def test_get_job_status_checks_latest_remembered_job(agent_module, fake_context, active_trial_subscription, monkeypatch):
+    agent_module._jobs_by_session[fake_context.session.session_id] = [
+        {"id": "backtest-123", "type": "backtest", "status": "queued", "dashboard_url": "https://futurecomplete.inait.ai/jobs/backtest-123"}
+    ]
+    captured = {}
+
+    def fake_get(path, identity, session_id, required_capability):
+        captured.update(path=path, session_id=session_id, required_capability=required_capability)
+        return {"status": "completed", "response": {"operation_type": "backtest", "session_id": "backtest-123", "data": {}}}
+
+    monkeypatch.setattr(agent_module, "_get_futurecomplete", fake_get)
+
+    result = tool_json(agent_module.get_job_status, fake_context)
+
+    assert result["ok"] is True
+    assert result["session_id"] == "backtest-123"
+    assert result["status"] == "completed"
+    assert result["is_terminal"] is True
+    assert captured["path"] == "/v1/sessions/backtest-123/status"
+    assert captured["required_capability"] == "backtest"
+    assert agent_module._jobs_by_session[fake_context.session.session_id][0]["status"] == "completed"
+
+
+def test_get_job_status_checks_explicit_session_id(agent_module, fake_context, active_trial_subscription, monkeypatch):
+    captured = {}
+
+    def fake_get(path, identity, session_id, required_capability):
+        captured.update(path=path, session_id=session_id, required_capability=required_capability)
+        return {"status": "queued", "response": {"operation_type": "backtest", "session_id": "external-456", "data": {}}}
+
+    monkeypatch.setattr(agent_module, "_get_futurecomplete", fake_get)
+
+    result = tool_json(agent_module.get_job_status, fake_context, session_id="external-456")
+
+    assert result["ok"] is True
+    assert result["session_id"] == "external-456"
+    assert result["status"] == "queued"
+    assert result["is_terminal"] is False
+    assert captured["path"] == "/v1/sessions/external-456/status"
+    assert captured["required_capability"] == "backtest"
+
+
+def test_polling_posts_result_summary_when_job_completes(agent_module, fake_context, monkeypatch):
+    sent_messages = []
+
+    class FakeTurnContext:
+        async def send_activity(self, message):
+            sent_messages.append(message)
+
+    def fake_get(path, identity, session_id, required_capability):
+        if path.endswith("/status"):
+            return {"status": "completed", "response": {"operation_type": "backtest", "session_id": "backtest-123"}}
+        if path.endswith("/result"):
+            return {
+                "status": "completed",
+                "response": {
+                    "operation_type": "backtest",
+                    "session_id": "backtest-123",
+                    "resource_id": "result:backtest-123",
+                    "data": {
+                        "metrics": {"mae": 1.25, "rmse": 2.5},
+                        "predictions": [{"date": "2016-01-01", "value": 123.45}],
+                    },
+                },
+            }
+        raise AssertionError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr(agent_module, "_get_futurecomplete", fake_get)
+    agent_module.config.futurecomplete_poll_interval_seconds = 0
+    agent_module.config.futurecomplete_poll_max_attempts = 1
+    job = {
+        "id": "backtest-123",
+        "type": "backtest",
+        "status": "running",
+        "dashboard_url": "https://futurecomplete.inait.ai/jobs/backtest-123",
+    }
+
+    asyncio.run(agent_module._poll_job_and_notify(FakeTurnContext(), fake_context.session.session_id, job))
+
+    assert len(sent_messages) == 1
+    assert "is completed" in sent_messages[0]
+    assert "Result summary:" in sent_messages[0]
+    assert "mae" in sent_messages[0]
+    assert "predictions" in sent_messages[0]
+    assert "Open the dashboard" in sent_messages[0]
+    assert job["result_summary"]["data"]["metrics"]["mae"] == 1.25
+    assert job["result_summary"]["data"]["predictions"]["type"] == "array"
 
 
 def test_list_jobs_returns_remembered_jobs(agent_module, fake_context):

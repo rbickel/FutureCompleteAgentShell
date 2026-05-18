@@ -44,6 +44,7 @@ MAX_SAMPLE_ROWS = 5
 SUPPORTED_DATASET_SUFFIXES = {".csv", ".xlsx", ".parquet"}
 TRIAL_LIMITATION_TEXT = "Trial subscriptions only allow Backtest jobs through /v1/backtest. They do not allow Forecast jobs through /v1/prediction or Benchmark jobs through /v1/benchmark."
 TERMINAL_JOB_STATUSES = {"completed", "complete", "succeeded", "success", "failed", "error", "cancelled", "canceled"}
+SUCCESS_JOB_STATUSES = {"completed", "complete", "succeeded", "success"}
 DEBUG_TRIGGER_PATTERN = re.compile(r"\bdebug\b", re.IGNORECASE)
 
 
@@ -751,6 +752,65 @@ def _summarize_api_response(response: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _summarize_result_value(value: Any, depth: int = 0) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if depth >= 2:
+        if isinstance(value, dict):
+            return {"type": "object", "keys": list(value.keys())[:10], "key_count": len(value)}
+        if isinstance(value, list):
+            return {"type": "array", "count": len(value)}
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _summarize_result_value(nested_value, depth + 1) for key, nested_value in list(value.items())[:10]}
+    if isinstance(value, list):
+        summary: dict[str, Any] = {"type": "array", "count": len(value)}
+        if value:
+            first = value[0]
+            if isinstance(first, dict):
+                summary["item_keys"] = list(first.keys())[:10]
+            elif len(value) <= 5 and all(isinstance(item, (bool, int, float, str)) or item is None for item in value):
+                summary["items"] = value
+            else:
+                summary["sample"] = [_summarize_result_value(item, depth + 1) for item in value[:3]]
+        return summary
+    return str(value)
+
+
+def _summarize_result_for_chat(response: dict[str, Any]) -> dict[str, Any]:
+    payload = _response_payload(response)
+    summary = {
+        "operation_type": payload.get("operation_type"),
+        "session_id": payload.get("session_id") or response.get("session_id"),
+        "resource_id": payload.get("resource_id"),
+        "dataset_resource_id": payload.get("dataset_resource_id"),
+    }
+    data = payload.get("data")
+    if isinstance(data, dict):
+        summary["data"] = _summarize_result_value(data)
+    elif data is not None:
+        summary["data"] = _summarize_result_value(data)
+    return {key: value for key, value in summary.items() if value is not None}
+
+
+def _format_result_summary_for_chat(summary: dict[str, Any]) -> str:
+    lines = []
+    if summary.get("operation_type"):
+        lines.append(f"Operation: {summary['operation_type']}")
+    if summary.get("session_id"):
+        lines.append(f"Session: {summary['session_id']}")
+    if summary.get("resource_id"):
+        lines.append(f"Resource: {summary['resource_id']}")
+    data = summary.get("data")
+    if isinstance(data, dict) and data:
+        lines.append("Result summary:")
+        for key, value in list(data.items())[:8]:
+            lines.append(f"- {key}: {json.dumps(value, sort_keys=True)[:500]}")
+    elif data is not None:
+        lines.append(f"Result summary: {json.dumps(data, sort_keys=True)[:500]}")
+    return "\n".join(lines) if lines else "The result is available."
+
+
 def _take_debug(response: dict[str, Any]) -> dict[str, Any] | None:
     debug = response.pop("_debug", None)
     return debug if isinstance(debug, dict) else None
@@ -827,10 +887,28 @@ async def _poll_job_and_notify(context: TurnContext, session_id: str, job: dict[
             job["last_status_response"] = _summarize_api_response(response)
             job["updated_at"] = _now_iso()
             if status in TERMINAL_JOB_STATUSES:
-                label = "completed" if job["status"] in {"complete", "succeeded", "success"} else job["status"]
-                await context.send_activity(
-                    f"Your FutureComplete {job.get('type')} job {job_id} is {label}. Inspect results: {job['dashboard_url']}"
-                )
+                label = "completed" if job["status"] in SUCCESS_JOB_STATUSES else job["status"]
+                message = f"Your FutureComplete {job.get('type')} job {job_id} is {label}."
+                if job["status"] in SUCCESS_JOB_STATUSES:
+                    try:
+                        result_response = await asyncio.to_thread(
+                            _get_futurecomplete,
+                            _job_result_path(job_id),
+                            identity,
+                            session_id,
+                            capability,
+                        )
+                        result_summary = _summarize_result_for_chat(result_response)
+                        job["result_response"] = _summarize_api_response(result_response)
+                        job["result_summary"] = result_summary
+                        job["updated_at"] = _now_iso()
+                        message += "\n\n" + _format_result_summary_for_chat(result_summary)
+                    except Exception as error:
+                        job["last_result_error"] = str(error)
+                        job["updated_at"] = _now_iso()
+                        message += f"\n\nI could not retrieve the result payload automatically: {error}"
+                message += f"\n\nOpen the dashboard for plots and CSV download: {job['dashboard_url']}"
+                await context.send_activity(message)
                 return
         except Exception as error:
             job["last_poll_error"] = str(error)
@@ -844,6 +922,15 @@ def _schedule_job_polling(context: TurnContext, session_id: str, job: dict[str, 
     task = asyncio.create_task(_poll_job_and_notify(context, session_id, job))
     _polling_tasks.add(task)
     task.add_done_callback(_polling_tasks.discard)
+
+
+def _find_remembered_job(current_session_id: str | None, job_session_id: str | None) -> dict[str, Any] | None:
+    jobs = _jobs_by_session.get(current_session_id or "", [])
+    if not jobs:
+        return None
+    if not job_session_id:
+        return jobs[-1]
+    return next((job for job in jobs if str(job.get("id")) == job_session_id), None)
 
 
 @tool(approval_mode="never_require")
@@ -1073,6 +1160,49 @@ def submit_benchmark(
 
 
 @tool(approval_mode="never_require")
+def get_job_status(
+    context: FunctionInvocationContext,
+    session_id: Annotated[str | None, Field(description="Optional FutureComplete session ID/job ID. If omitted, checks the most recent remembered job in this conversation.")] = None,
+) -> Annotated[str, Field(description="Check a FutureComplete job status by session ID, or the latest remembered job if no session ID is provided.")]:
+    """Fetch the current status for a FutureComplete background job."""
+    try:
+        current_session_id = _get_session_id(context)
+        identity = _get_session_identity(context)
+        matching_job = _find_remembered_job(current_session_id, session_id)
+        target_session_id = session_id or (str(matching_job["id"]) if matching_job else None)
+        if not target_session_id:
+            raise ValueError("No FutureComplete job is remembered in this conversation. Ask the user for the FutureComplete session ID from the dashboard URL.")
+
+        capability = _job_capability(matching_job.get("type") if matching_job else "backtest")
+        response = _get_futurecomplete(_job_status_path(target_session_id), identity, current_session_id, capability)
+        debug = _take_debug(response)
+        status = _extract_job_status(response) or str(response.get("status") or "unknown").lower()
+        normalized_status = "completed" if status in {"complete", "succeeded", "success"} else status
+        if matching_job is not None:
+            matching_job["status"] = normalized_status
+            matching_job["last_status_response"] = _summarize_api_response(response)
+            matching_job["updated_at"] = _now_iso()
+
+        return _json(
+            _add_debug(
+                {
+                    "ok": True,
+                    "session_id": target_session_id,
+                    "status": normalized_status,
+                    "is_terminal": normalized_status in TERMINAL_JOB_STATUSES,
+                    "dashboard_url": _dashboard_link(target_session_id),
+                    "response": _summarize_api_response(response),
+                },
+                debug,
+            )
+        )
+    except FutureCompleteApiError as error:
+        return _json(_futurecomplete_error_payload(error))
+    except Exception as error:
+        return _json({"ok": False, "error": str(error)})
+
+
+@tool(approval_mode="never_require")
 def cancel_job(
     context: FunctionInvocationContext,
     session_id: Annotated[str, Field(description="FutureComplete session ID/job ID to cancel.")],
@@ -1155,6 +1285,7 @@ maf_agent = chat_client.as_agent(
         submit_forecast, 
         submit_backtest, 
         submit_benchmark,
+        get_job_status,
         cancel_job,
         list_jobs, 
         mcp_server
