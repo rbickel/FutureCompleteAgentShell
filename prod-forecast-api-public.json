@@ -7,7 +7,7 @@
     },
     "servers": [
         {
-            "url": "https://inait-saas-apim-jjyzmt7v.azure-api.net"
+            "url": "https://api.forecasting.inait.ai"
         }
     ],
     "paths": {

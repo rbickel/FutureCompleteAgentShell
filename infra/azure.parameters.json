@@ -15,7 +15,7 @@
       "value": "${{AZURE_OPENAI_ENDPOINT}}"
     },
     "futurecompleteApiBaseUrl": {
-      "value": "https://inait-saas-apim-jjyzmt7v.azure-api.net"
+      "value": "https://api.forecasting.inait.ai"
     },
     "futurecompleteDashboardUrl": {
       "value": "https://futurecomplete.inait.ai"

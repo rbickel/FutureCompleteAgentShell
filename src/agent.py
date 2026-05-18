@@ -6,6 +6,7 @@ import json
 import tempfile
 import urllib.error
 import urllib.request
+import re
 from urllib.parse import urlparse
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +44,25 @@ MAX_SAMPLE_ROWS = 5
 SUPPORTED_DATASET_SUFFIXES = {".csv", ".xlsx", ".parquet"}
 TRIAL_LIMITATION_TEXT = "Trial subscriptions only allow Backtest jobs through /v1/backtest. They do not allow Forecast jobs through /v1/prediction or Benchmark jobs through /v1/benchmark."
 TERMINAL_JOB_STATUSES = {"completed", "complete", "succeeded", "success", "failed", "error", "cancelled", "canceled"}
+DEBUG_TRIGGER_PATTERN = re.compile(r"\bdebug\b", re.IGNORECASE)
+
+
+class FutureCompleteApiError(RuntimeError):
+    def __init__(self, message: str, http_status: int, response_body: str, method: str, url: str, debug: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.http_status = http_status
+        self.response_body = response_body
+        self.method = method
+        self.url = url
+        self.debug = debug
+
+    @property
+    def problem(self) -> dict[str, Any]:
+        try:
+            parsed = json.loads(self.response_body) if self.response_body else {}
+        except json.JSONDecodeError:
+            parsed = {"detail": self.response_body}
+        return parsed if isinstance(parsed, dict) else {"detail": str(parsed)}
 
 load_dotenv()
 
@@ -62,6 +82,135 @@ def _now_iso() -> str:
 
 def _json(data: dict[str, Any]) -> str:
     return json.dumps(data, indent=2, sort_keys=True)
+
+
+def _debug_enabled(session_id: str | None) -> bool:
+    return bool(session_id and session_id in _debug_sessions)
+
+
+def _sanitize_headers(headers: Any) -> dict[str, str]:
+    sanitized: dict[str, str] = {}
+    for key, value in dict(headers or {}).items():
+        sanitized[str(key)] = str(value)
+    return sanitized
+
+
+def _sanitize_body_for_debug(body: Any) -> Any:
+    if isinstance(body, dict):
+        sanitized: dict[str, Any] = {}
+        for key, value in body.items():
+            if key == "data" and isinstance(value, dict):
+                if {"index", "columns", "data"}.issubset(value.keys()):
+                    columns = value.get("columns") if isinstance(value.get("columns"), list) else []
+                    rows = value.get("data") if isinstance(value.get("data"), list) else []
+                    sanitized[key] = {
+                        "omitted": "dataset payload omitted from debug output",
+                        "format": "pandas_split",
+                        "columns": columns,
+                        "column_count": len(columns),
+                        "row_count": len(rows),
+                    }
+                    continue
+                sanitized[key] = {
+                    "omitted": "dataset payload omitted from debug output",
+                    "format": "column_mapping",
+                    "columns": list(value.keys()),
+                    "column_count": len(value),
+                }
+            else:
+                sanitized[key] = _sanitize_body_for_debug(value)
+        return sanitized
+    if isinstance(body, list):
+        return [_sanitize_body_for_debug(item) for item in body]
+    return body
+
+
+def _parse_json_or_text(raw_body: str) -> Any:
+    if not raw_body:
+        return None
+    try:
+        return json.loads(raw_body)
+    except json.JSONDecodeError:
+        return raw_body
+
+
+def _debug_exchange(
+    method: str,
+    url: str,
+    request_headers: dict[str, str],
+    request_body: Any,
+    response_status: int | None,
+    response_headers: Any,
+    response_body: Any,
+) -> dict[str, Any]:
+    return {
+        "request": {
+            "method": method,
+            "url": url,
+            "headers": _sanitize_headers(request_headers),
+            "body": _sanitize_body_for_debug(request_body),
+        },
+        "response": {
+            "status": response_status,
+            "headers": _sanitize_headers(response_headers),
+            "body": _sanitize_body_for_debug(response_body),
+        },
+    }
+
+
+def _futurecomplete_api_error(
+    prefix: str,
+    error: urllib.error.HTTPError,
+    method: str,
+    url: str,
+    request_headers: dict[str, str] | None = None,
+    request_body: Any = None,
+    include_debug: bool = False,
+) -> FutureCompleteApiError:
+    error_body = error.read().decode("utf-8", errors="replace")
+    problem = {}
+    try:
+        parsed = json.loads(error_body) if error_body else {}
+        if isinstance(parsed, dict):
+            problem = parsed
+    except json.JSONDecodeError:
+        problem = {}
+    code = problem.get("code") or problem.get("statusCode")
+    detail = problem.get("detail") or problem.get("message") or problem.get("title") or error.reason
+    message = f"{prefix} returned HTTP {error.code}"
+    if code:
+        message += f" ({code})"
+    if detail:
+        message += f": {detail}"
+    debug = None
+    if include_debug:
+        debug = _debug_exchange(
+            method,
+            url,
+            request_headers or {},
+            request_body,
+            error.code,
+            dict(error.headers.items()) if error.headers else {},
+            _parse_json_or_text(error_body),
+        )
+    return FutureCompleteApiError(message, error.code, error_body, method, url, debug=debug)
+
+
+def _futurecomplete_error_payload(error: FutureCompleteApiError) -> dict[str, Any]:
+    problem = error.problem
+    payload = {
+        "ok": False,
+        "error": str(error),
+        "http_status": error.http_status,
+        "error_code": problem.get("code") or problem.get("statusCode"),
+        "error_title": problem.get("title"),
+        "error_detail": problem.get("detail") or problem.get("message"),
+        "error_context": problem.get("context"),
+        "errors": problem.get("errors"),
+    }
+    if error.debug:
+        payload["debug"] = error.debug
+    return payload
 
 
 def _get_session_id(context: FunctionInvocationContext) -> str | None:
@@ -122,38 +271,56 @@ def _get_session_subscription(session_id: str | None, identity: dict[str, str | 
     return _subscriptions_by_user.get(_subscription_cache_key(identity))
 
 
-def _create_trial_subscription(identity: dict[str, str | None], user_email: str | None = None) -> dict[str, Any]:
+def _create_trial_subscription(identity: dict[str, str | None], user_email: str | None = None, session_id: str | None = None) -> dict[str, Any]:
     resolved_email = user_email if _looks_like_email(user_email) else _extract_user_email(identity)
     if not resolved_email:
         raise RuntimeError("A work email is required to create a self-service trial subscription.")
     if not user_email or not config.futurecomplete_trial_users_url:
         user_email = resolved_email
 
-    payload = json.dumps(
-        {
-            "user_email": resolved_email,
-            "plan_id": config.futurecomplete_trial_plan_id,
-        }
-    ).encode("utf-8")
+    request_body = {
+        "user_email": resolved_email,
+        "plan_id": config.futurecomplete_trial_plan_id,
+    }
+    request_headers = {"Content-Type": "application/json", "Accept": "application/json"}
     request = urllib.request.Request(
         config.futurecomplete_trial_users_url,
-        data=payload,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        data=json.dumps(request_body).encode("utf-8"),
+        headers=request_headers,
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            body = json.loads(response.read().decode("utf-8"))
+            raw_body = response.read().decode("utf-8")
+            body = json.loads(raw_body) if raw_body else {}
+            debug = None
+            if _debug_enabled(session_id):
+                debug = _debug_exchange(
+                    "POST",
+                    config.futurecomplete_trial_users_url,
+                    request_headers,
+                    request_body,
+                    response.status,
+                    dict(response.headers.items()),
+                    body,
+                )
     except urllib.error.HTTPError as error:
-        error_body = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"FutureComplete trial license request returned HTTP {error.code}: {error_body}") from error
+        raise _futurecomplete_api_error(
+            "FutureComplete trial license request",
+            error,
+            "POST",
+            config.futurecomplete_trial_users_url,
+            request_headers,
+            request_body,
+            include_debug=_debug_enabled(session_id),
+        ) from error
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
         raise RuntimeError(f"FutureComplete trial license request failed: {error}") from error
 
     subscription_key = _extract_subscription_key(body)
     if not subscription_key:
         raise RuntimeError("FutureComplete trial license response did not include an APIM subscription key.")
-    return {
+    subscription: dict[str, Any] = {
         "cache_key": _subscription_cache_key(identity, resolved_email),
         "user_email": resolved_email,
         "plan_id": str((body.get("user") or {}).get("plan_id") or config.futurecomplete_trial_plan_id),
@@ -162,6 +329,9 @@ def _create_trial_subscription(identity: dict[str, str | None], user_email: str 
         "created_at": _now_iso(),
         "limitations": TRIAL_LIMITATION_TEXT,
     }
+    if debug:
+        subscription["debug"] = debug
+    return subscription
 
 
 def _futurecomplete_headers(identity: dict[str, str | None], session_id: str | None, required_capability: str) -> dict[str, str]:
@@ -182,23 +352,34 @@ def _futurecomplete_headers(identity: dict[str, str | None], session_id: str | N
 
 def _post_futurecomplete(path: str, payload: dict[str, Any], identity: dict[str, str | None], session_id: str | None, required_capability: str) -> dict[str, Any]:
     url = f"{config.futurecomplete_api_base_url.rstrip('/')}{path}"
+    headers = _futurecomplete_headers(identity, session_id, required_capability)
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers=_futurecomplete_headers(identity, session_id, required_capability),
+        headers=headers,
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
             raw_body = response.read().decode("utf-8")
-            body = json.loads(raw_body) if raw_body else {}
+            parsed_body = _parse_json_or_text(raw_body)
+            body = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
             location = response.headers.get("Location")
             if location:
                 body["location"] = location
+            if _debug_enabled(session_id):
+                body["_debug"] = _debug_exchange(
+                    "POST",
+                    url,
+                    headers,
+                    payload,
+                    response.status,
+                    dict(response.headers.items()),
+                    parsed_body,
+                )
             return body
     except urllib.error.HTTPError as error:
-        error_body = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"FutureComplete API returned HTTP {error.code}: {error_body}") from error
+        raise _futurecomplete_api_error("FutureComplete API", error, "POST", url, headers, payload, include_debug=_debug_enabled(session_id)) from error
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
         raise RuntimeError(f"FutureComplete API request failed: {error}") from error
 
@@ -211,28 +392,51 @@ def _post_futurecomplete_without_body(path: str, identity: dict[str, str | None]
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             raw_body = response.read().decode("utf-8")
-            return json.loads(raw_body) if raw_body else {}
+            parsed_body = _parse_json_or_text(raw_body)
+            body = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
+            if _debug_enabled(session_id):
+                body["_debug"] = _debug_exchange(
+                    "POST",
+                    url,
+                    headers,
+                    None,
+                    response.status,
+                    dict(response.headers.items()),
+                    parsed_body,
+                )
+            return body
     except urllib.error.HTTPError as error:
-        error_body = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"FutureComplete API returned HTTP {error.code}: {error_body}") from error
+        raise _futurecomplete_api_error("FutureComplete API", error, "POST", url, headers, None, include_debug=_debug_enabled(session_id)) from error
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
         raise RuntimeError(f"FutureComplete API request failed: {error}") from error
 
 
 def _get_futurecomplete(path: str, identity: dict[str, str | None], session_id: str | None, required_capability: str) -> dict[str, Any]:
     url = f"{config.futurecomplete_api_base_url.rstrip('/')}{path}"
+    headers = _futurecomplete_headers(identity, session_id, required_capability)
     request = urllib.request.Request(
         url,
-        headers=_futurecomplete_headers(identity, session_id, required_capability),
+        headers=headers,
         method="GET",
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             raw_body = response.read().decode("utf-8")
-            return json.loads(raw_body) if raw_body else {}
+            parsed_body = _parse_json_or_text(raw_body)
+            body = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
+            if _debug_enabled(session_id):
+                body["_debug"] = _debug_exchange(
+                    "GET",
+                    url,
+                    headers,
+                    None,
+                    response.status,
+                    dict(response.headers.items()),
+                    parsed_body,
+                )
+            return body
     except urllib.error.HTTPError as error:
-        error_body = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"FutureComplete status API returned HTTP {error.code}: {error_body}") from error
+        raise _futurecomplete_api_error("FutureComplete status API", error, "GET", url, headers, None, include_debug=_debug_enabled(session_id)) from error
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
         raise RuntimeError(f"FutureComplete status request failed: {error}") from error
 
@@ -281,9 +485,17 @@ def _download_file(url: str, suffix: str) -> Path:
 
 
 def _resolve_dataset_path(context: FunctionInvocationContext, file_reference: str | None) -> tuple[Path, str]:
-    candidate = Path(file_reference).expanduser() if file_reference else None
-    if candidate and candidate.exists():
-        return candidate, str(candidate)
+    if file_reference:
+        raw_candidate = Path(file_reference).expanduser()
+        search_candidates = [
+            raw_candidate,
+            Path.cwd() / raw_candidate,
+            Path(__file__).resolve().parent / raw_candidate,
+            Path(__file__).resolve().parent.parent / raw_candidate,
+        ]
+        for candidate in search_candidates:
+            if candidate.exists():
+                return candidate.resolve(), str(candidate)
 
     session_id = _get_session_id(context)
     attachment = _find_attachment(session_id, file_reference)
@@ -302,6 +514,45 @@ def _resolve_dataset_path(context: FunctionInvocationContext, file_reference: st
     raise ValueError("No dataset file was found. Upload a CSV, XLSX, or Parquet file, or provide a local path or URL.")
 
 
+def _read_dataset_frame(path: Path, row_limit: int | None = None):
+    try:
+        import pandas as pd
+    except ImportError as error:
+        raise RuntimeError("Dataset handling requires pandas. Install dependencies from src/requirements.txt.") from error
+
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        frame = pd.read_csv(path, nrows=row_limit)
+        if len(frame.columns) > 0:
+            first_column = frame.columns[0]
+            first_column_name = str(first_column)
+            first_column_values = frame[first_column]
+            parsed_index = pd.to_datetime(
+                first_column_values,
+                errors="coerce",
+                dayfirst=first_column_values.astype(str).str.match(r"^\d{1,2}\.\d{1,2}\.\d{4}").mean() >= 0.8,
+            )
+            should_use_as_index = first_column_name.startswith("Unnamed:") or first_column_name.lower() in {"date", "timestamp", "time", "ds"}
+        else:
+            should_use_as_index = False
+
+        if should_use_as_index:
+            index_name = "date" if first_column_name.startswith("Unnamed:") else first_column_name
+            if parsed_index.notna().mean() >= 0.8:
+                frame = frame.drop(columns=[first_column])
+                frame.index = parsed_index.dt.strftime("%Y-%m-%d")
+                frame.index.name = index_name
+            else:
+                frame = frame.rename(columns={first_column: index_name})
+    elif suffix == ".xlsx":
+        frame = pd.read_excel(path, nrows=row_limit)
+    else:
+        frame = pd.read_parquet(path)
+        if row_limit is not None:
+            frame = frame.head(row_limit)
+    return frame
+
+
 def _inspect_dataset_file(path: Path, source_name: str) -> dict[str, Any]:
     if not path.exists():
         raise ValueError(f"Dataset file does not exist: {path}")
@@ -312,19 +563,14 @@ def _inspect_dataset_file(path: Path, source_name: str) -> dict[str, Any]:
     if suffix not in SUPPORTED_DATASET_SUFFIXES:
         raise ValueError("Unsupported dataset type. Use .csv, .xlsx, or .parquet.")
 
-    try:
-        import pandas as pd
-    except ImportError as error:
-        raise RuntimeError("Dataset inspection requires pandas. Install dependencies from src/requirements.txt.") from error
-
     if suffix == ".csv":
-        frame = pd.read_csv(path, nrows=100)
+        frame = _read_dataset_frame(path, row_limit=100)
         row_count = sum(1 for _ in path.open("rb")) - 1
     elif suffix == ".xlsx":
-        frame = pd.read_excel(path, nrows=100)
+        frame = _read_dataset_frame(path, row_limit=100)
         row_count = None
     else:
-        frame = pd.read_parquet(path)
+        frame = _read_dataset_frame(path)
         row_count = len(frame)
         frame = frame.head(100)
 
@@ -332,6 +578,7 @@ def _inspect_dataset_file(path: Path, source_name: str) -> dict[str, Any]:
     dtypes = {str(column): str(dtype) for column, dtype in frame.dtypes.items()}
     numeric_columns = [column for column in columns if str(frame[column].dtype).startswith(("int", "float"))]
     datetime_like_columns = [column for column in columns if "datetime" in str(frame[column].dtype)]
+    suggested_target_columns = [column for column in numeric_columns if "__" not in column] or numeric_columns
     sample_preview_json = frame.head(MAX_SAMPLE_ROWS).astype(object).where(frame.notna(), None).to_json(orient="records", date_format="iso") or "[]"
     sample_preview = json.loads(sample_preview_json)
 
@@ -344,9 +591,11 @@ def _inspect_dataset_file(path: Path, source_name: str) -> dict[str, Any]:
         "sample_preview": sample_preview,
         "columns": columns,
         "dtypes": dtypes,
+        "index_name": frame.index.name,
         "numeric_columns": numeric_columns,
         "datetime_like_columns": datetime_like_columns,
-        "default_target_column": columns[0] if columns else None,
+        "suggested_target_columns": suggested_target_columns,
+        "default_target_column": suggested_target_columns[0] if suggested_target_columns else (columns[0] if columns else None),
     }
 
 
@@ -360,19 +609,9 @@ def _load_dataset_data(path: Path) -> dict[str, Any]:
     if suffix not in SUPPORTED_DATASET_SUFFIXES:
         raise ValueError("Unsupported dataset type. Use .csv, .xlsx, or .parquet.")
 
-    try:
-        import pandas as pd
-    except ImportError as error:
-        raise RuntimeError("Dataset loading requires pandas. Install dependencies from src/requirements.txt.") from error
+    frame = _read_dataset_frame(path)
 
-    if suffix == ".csv":
-        frame = pd.read_csv(path)
-    elif suffix == ".xlsx":
-        frame = pd.read_excel(path)
-    else:
-        frame = pd.read_parquet(path)
-
-    dataset_json = frame.to_json(orient="columns", date_format="iso") or "{}"
+    dataset_json = frame.to_json(orient="split", date_format="iso") or "{}"
     return json.loads(dataset_json)
 
 
@@ -392,8 +631,8 @@ def _operation_arguments(
     arguments = {
         "operation_type": operation_type,
         "forecasting_horizon": horizon,
-        "targets": _normalize_list(target_columns),
-        "features": _normalize_list(feature_columns) or None,
+        "targets": target_columns,
+        "features": feature_columns,
         "prediction_interval_levels": prediction_intervals,
         "prediction_stride": prediction_stride,
         "end_date": end_date,
@@ -424,9 +663,19 @@ def _public_operation_payload(
 
 def _summarize_public_payload(payload: dict[str, Any], source_name: str) -> dict[str, Any]:
     data = payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("columns"), list):
+        data_columns = data["columns"]
+        data_format = "pandas_split"
+    elif isinstance(data, dict):
+        data_columns = list(data.keys())
+        data_format = "column_mapping"
+    else:
+        data_columns = []
+        data_format = None
     return {
         "data_source": source_name,
-        "data_columns": list(data.keys()) if isinstance(data, dict) else [],
+        "data_format": data_format,
+        "data_columns": data_columns,
         "config": payload.get("config"),
         "background": payload.get("background"),
     }
@@ -481,6 +730,17 @@ def _summarize_api_response(response: dict[str, Any]) -> dict[str, Any]:
         summary["response"]["data_keys"] = list(data.keys())
         summary["response"]["data_inline"] = bool(data)
     return summary
+
+
+def _take_debug(response: dict[str, Any]) -> dict[str, Any] | None:
+    debug = response.pop("_debug", None)
+    return debug if isinstance(debug, dict) else None
+
+
+def _add_debug(payload: dict[str, Any], debug: dict[str, Any] | None) -> dict[str, Any]:
+    if debug:
+        payload["debug"] = debug
+    return payload
 
 
 def _remember_job(context: FunctionInvocationContext, job_type: str, request_summary: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
@@ -632,23 +892,27 @@ def get_trial_subscription(
             raise ValueError(TRIAL_LIMITATION_TEXT + " Ask the user to explicitly accept these limitations before calling this tool.")
         session_id = _get_session_id(context)
         identity = _get_session_identity(context)
-        subscription = _create_trial_subscription(identity, user_email)
+        subscription = _create_trial_subscription(identity, user_email, session_id=session_id)
         cache_key = str(subscription["cache_key"])
         _subscriptions_by_user[cache_key] = subscription
         if session_id:
             _session_subscription_keys[session_id] = cache_key
-        return _json(
-            {
-                "ok": True,
-                "subscription": {
-                    "plan_id": subscription["plan_id"],
-                    "source": subscription["source"],
-                    "user_email": subscription["user_email"],
-                    "allowed_workflows": ["backtest"],
-                    "limitations": TRIAL_LIMITATION_TEXT,
-                },
-            }
-        )
+        result = {
+            "ok": True,
+            "subscription": {
+                "plan_id": subscription["plan_id"],
+                "source": subscription["source"],
+                "user_email": subscription["user_email"],
+                "subscription_key": subscription["subscription_key"],
+                "allowed_workflows": ["backtest"],
+                "limitations": TRIAL_LIMITATION_TEXT,
+            },
+        }
+        return _json(_add_debug(result, subscription.get("debug")))
+    except FutureCompleteApiError as error:
+        payload = _futurecomplete_error_payload(error)
+        payload["trial_limitations"] = TRIAL_LIMITATION_TEXT
+        return _json(payload)
     except Exception as error:
         return _json({"ok": False, "error": str(error), "trial_limitations": TRIAL_LIMITATION_TEXT})
 
@@ -672,8 +936,11 @@ def submit_forecast(
         request_summary = _summarize_public_payload(payload, source_name)
         session_id = _get_session_id(context)
         response = _post_futurecomplete("/v1/prediction", payload, _get_session_identity(context), session_id, "forecast")
+        debug = _take_debug(response)
         job = _remember_job(context, "forecast", request_summary, response)
-        return _json({"ok": True, "job": job})
+        return _json(_add_debug({"ok": True, "job": job}, debug))
+    except FutureCompleteApiError as error:
+        return _json(_futurecomplete_error_payload(error))
     except Exception as error:
         return _json({"ok": False, "error": str(error)})
 
@@ -683,7 +950,7 @@ def submit_backtest(
     context: FunctionInvocationContext,
     target_columns: Annotated[str, Field(description="Comma-separated target columns for the backtest.")],
     horizon: Annotated[int, Field(description="Forecast horizon used inside the backtest.")],
-    prediction_stride: Annotated[int, Field(description="Backtest refresh cadence. Must be a multiple of horizon.")],
+    prediction_stride: Annotated[int, Field(description="Backtest refresh cadence. Must be a positive integer; 1 is valid.")],
     prediction_intervals: Annotated[str, Field(description="Comma-separated prediction interval confidence bands, such as 0.8,0.95.")],
     feature_columns: Annotated[str | None, Field(description="Optional comma-separated feature or driver columns.")] = None,
     run_explain: Annotated[bool, Field(description="Whether to generate an explainability report.")] = False,
@@ -694,8 +961,8 @@ def submit_backtest(
 ) -> Annotated[str, Field(description="Submit a FutureComplete backtest job and return status plus dashboard link.")]:
     """Submit a backtest job to FutureComplete's public backtest endpoint."""
     try:
-        if prediction_stride % horizon != 0:
-            raise ValueError("prediction_stride must be a multiple of horizon.")
+        if prediction_stride < 1:
+            raise ValueError("prediction_stride must be a positive integer.")
         has_size = backtest_size is not None
         has_dates = bool(backtest_start_date or backtest_end_date)
         if has_size and has_dates:
@@ -721,8 +988,11 @@ def submit_backtest(
         request_summary = _summarize_public_payload(payload, source_name)
         session_id = _get_session_id(context)
         response = _post_futurecomplete("/v1/backtest", payload, _get_session_identity(context), session_id, "backtest")
+        debug = _take_debug(response)
         job = _remember_job(context, "backtest", request_summary, response)
-        return _json({"ok": True, "job": job})
+        return _json(_add_debug({"ok": True, "job": job}, debug))
+    except FutureCompleteApiError as error:
+        return _json(_futurecomplete_error_payload(error))
     except Exception as error:
         return _json({"ok": False, "error": str(error)})
 
@@ -732,7 +1002,7 @@ def submit_benchmark(
     context: FunctionInvocationContext,
     target_columns: Annotated[str, Field(description="Comma-separated target columns for the benchmark backtest configuration.")],
     horizon: Annotated[int, Field(description="Forecast horizon used inside the benchmark backtest configuration.")],
-    prediction_stride: Annotated[int, Field(description="Backtest refresh cadence. Must be a multiple of horizon.")],
+    prediction_stride: Annotated[int, Field(description="Backtest refresh cadence. Must be a positive integer; 1 is valid.")],
     prediction_intervals: Annotated[str, Field(description="Comma-separated prediction interval confidence bands, such as 0.8,0.95.")],
     feature_columns: Annotated[str | None, Field(description="Optional comma-separated feature or driver columns.")] = None,
     run_explain: Annotated[bool, Field(description="Whether to generate an explainability report.")] = False,
@@ -743,8 +1013,8 @@ def submit_benchmark(
 ) -> Annotated[str, Field(description="Submit a FutureComplete benchmark job for multi-model comparison.")]:
     """Submit a benchmark job to FutureComplete's public benchmark endpoint."""
     try:
-        if prediction_stride % horizon != 0:
-            raise ValueError("prediction_stride must be a multiple of horizon.")
+        if prediction_stride < 1:
+            raise ValueError("prediction_stride must be a positive integer.")
         has_size = backtest_size is not None
         has_dates = bool(backtest_start_date or backtest_end_date)
         if has_size and has_dates:
@@ -774,8 +1044,11 @@ def submit_benchmark(
         request_summary = _summarize_public_payload(payload, source_name)
         session_id = _get_session_id(context)
         response = _post_futurecomplete("/v1/benchmark", payload, _get_session_identity(context), session_id, "benchmark")
+        debug = _take_debug(response)
         job = _remember_job(context, "benchmark", request_summary, response)
-        return _json({"ok": True, "job": job})
+        return _json(_add_debug({"ok": True, "job": job}, debug))
+    except FutureCompleteApiError as error:
+        return _json(_futurecomplete_error_payload(error))
     except Exception as error:
         return _json({"ok": False, "error": str(error)})
 
@@ -793,11 +1066,14 @@ def cancel_job(
         matching_job = next((job for job in jobs if str(job.get("id")) == session_id), None)
         capability = "backtest"
         response = _post_futurecomplete_without_body(_job_cancel_path(session_id), identity, current_session_id, capability)
+        debug = _take_debug(response)
         if matching_job is not None:
             matching_job["status"] = "cancelled" if response.get("status") == "success" else str(response.get("status") or "cancel_requested")
             matching_job["cancel_response"] = response
             matching_job["updated_at"] = _now_iso()
-        return _json({"ok": True, "session_id": session_id, "response": response})
+        return _json(_add_debug({"ok": True, "session_id": session_id, "response": response}, debug))
+    except FutureCompleteApiError as error:
+        return _json(_futurecomplete_error_payload(error))
     except Exception as error:
         return _json({"ok": False, "error": str(error)})
 
@@ -881,6 +1157,7 @@ _jobs_by_session: dict[str, list[dict[str, Any]]] = {}
 _subscriptions_by_user: dict[str, dict[str, Any]] = {}
 _session_subscription_keys: dict[str, str] = {}
 _polling_tasks: set[asyncio.Task] = set()
+_debug_sessions: set[str] = set()
 
 RESET_COMMANDS = {
     "/clear",
@@ -954,6 +1231,15 @@ def _attachment_prompt(captured: list[dict[str, Any]]) -> str:
     ]
     return "\n\nThe user uploaded these files, which are available to the inspect_dataset tool:\n" + "\n".join(attachment_lines)
 
+
+def _llm_prompt_debug_payload(agent_input: str) -> dict[str, Any]:
+    return {
+        "llm_prompts": {
+            "instructions": system_prompt,
+            "input": agent_input,
+        }
+    }
+
 # Define storage and application
 storage = MemoryStorage()
 connection_manager = MsalConnectionManager(**agents_sdk_config)
@@ -985,6 +1271,7 @@ async def on_message(context: TurnContext, state: TurnState):
             _dataset_schemas_by_session.pop(previous_session.session_id, None)
             _jobs_by_session.pop(previous_session.session_id, None)
             _session_subscription_keys.pop(previous_session.session_id, None)
+            _debug_sessions.discard(previous_session.session_id)
 
     session = _sessions.get(conversation_id)
     if session is None:
@@ -997,12 +1284,21 @@ async def on_message(context: TurnContext, state: TurnState):
     user_identity = _extract_user_identity(context)
     _session_users[session.session_id] = user_identity
     captured_attachments = _capture_attachments(context, session.session_id)
+    debug_requested = bool(DEBUG_TRIGGER_PATTERN.search(incoming_text))
+    if debug_requested:
+        _debug_sessions.add(session.session_id)
     print(f"[session {session.session_id}] user identity: {user_identity}", file=sys.stderr)
 
     if should_reset:
         agent_input = "The user cleared the conversation. Acknowledge the reset and restart the FutureComplete welcome flow."
     else:
         agent_input = incoming_text + _attachment_prompt(captured_attachments)
+        if debug_requested:
+            agent_input += (
+                "\n\nHost note: Debug mode is enabled for this session. If the user is confirming a prepared "
+                "FutureComplete API call, proceed with the confirmed call and include any `debug` block returned by "
+                "the tool. Debug output must not include uploaded dataset contents or subscription keys."
+            )
 
     before_job_ids = {job["id"] for job in _jobs_by_session.get(session.session_id, [])}
     response = await maf_agent.run(agent_input, session=session)
@@ -1010,7 +1306,11 @@ async def on_message(context: TurnContext, state: TurnState):
         if job["id"] not in before_job_ids:
             _schedule_job_polling(context, session.session_id, job)
 
-    await context.send_activity(response.text)
+    response_text = response.text
+    if _debug_enabled(session.session_id):
+        response_text += "\n\nDebug LLM prompt payload:\n```json\n" + _json(_llm_prompt_debug_payload(agent_input)) + "\n```"
+
+    await context.send_activity(response_text)
 
 @agent_app.error
 async def on_error(context: TurnContext, error: Exception):

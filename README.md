@@ -54,7 +54,15 @@ Run the offline end-to-end evaluation for the FutureComplete single-agent flow:
 python evals/futurecomplete_e2e_eval.py --json
 ```
 
-The tests and evaluations use `dataset_GKYZ_2016_AAPL_MSFT_trimmed.csv` as the sample input dataset. Backend calls are mocked by default, so the suite validates request shape, trial gating, job cancellation, and agent-flow behavior without calling production APIs.
+Run the same evaluation with live public API checks:
+
+```powershell
+python evals/futurecomplete_e2e_eval.py --include-live-api --json
+```
+
+The tests and evaluations use `dataset_GKYZ_2016_AAPL_MSFT_trimmed.csv` as the sample input dataset. Backend calls are mocked by default, so the suite validates request shape, trial gating, job cancellation, and agent-flow behavior without calling production APIs. The optional live checks call `/health` and intentionally call `/v1/backtest` without a subscription key to verify the public server and authentication error contract without printing or requiring secrets. If `/health` is protected by API Management, `401` or `403` is treated as a successful reachability/auth validation.
+
+During an interactive conversation, type `debug` at any point to enable debug mode for that session. When a FutureComplete API call runs in debug mode, the agent shows request and response method, URL, headers, and body values. Uploaded dataset contents are still omitted from debug output and replaced with column/count metadata. Trial subscription creation returns the generated subscription key so it can be reused outside Teams, such as in a notebook.
 
 ## What's included in the template
 

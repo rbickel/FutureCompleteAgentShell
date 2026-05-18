@@ -27,7 +27,7 @@ def agent_module(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT_NAME", "test-deployment")
     monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("FUTURECOMPLETE_API_BASE_URL", "https://inait-saas-apim-jjyzmt7v.azure-api.net")
+    monkeypatch.setenv("FUTURECOMPLETE_API_BASE_URL", "https://api.forecasting.inait.ai")
     monkeypatch.setenv("FUTURECOMPLETE_DASHBOARD_URL", "https://futurecomplete.inait.ai")
     monkeypatch.setenv("FUTURECOMPLETE_TRIAL_USERS_URL", "https://api.forecasting.inait.ai/users/dev/users")
     monkeypatch.setenv("FUTURECOMPLETE_TRIAL_PLAN_ID", "trial")
@@ -45,6 +45,7 @@ def agent_module(monkeypatch):
     module._jobs_by_session.clear()
     module._subscriptions_by_user.clear()
     module._session_subscription_keys.clear()
+    module._debug_sessions.clear()
 
     yield module
 

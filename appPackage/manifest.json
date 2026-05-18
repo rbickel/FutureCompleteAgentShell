@@ -29,7 +29,8 @@
             "scopes": [
                 "team",
                 "groupChat",
-                "personal"
+                "personal",
+                "copilot"
             ],
             "supportsFiles": true,
             "isNotificationOnly": false,
@@ -70,5 +71,13 @@
     "validDomains": [
         "futurecomplete.inait.ai",
         "github.com"
-    ]
+    ],
+    "copilotAgents": {
+        "customEngineAgents": [
+            {
+                "type": "bot",
+                "id": "${{BOT_ID}}"
+            }
+        ]
+    }
 }

@@ -11,7 +11,7 @@ class Config:
         self.azure_openai_api_key = env["AZURE_OPENAI_API_KEY"] # Azure OpenAI API key
         self.azure_openai_deployment_name = env["AZURE_OPENAI_DEPLOYMENT_NAME"] # Azure OpenAI model deployment name
         self.azure_openai_endpoint = env["AZURE_OPENAI_ENDPOINT"] # Azure OpenAI endpoint
-        self.futurecomplete_api_base_url = env.get("FUTURECOMPLETE_API_BASE_URL") or "https://inait-saas-apim-jjyzmt7v.azure-api.net"
+        self.futurecomplete_api_base_url = env.get("FUTURECOMPLETE_API_BASE_URL") or "https://api.forecasting.inait.ai"
         self.futurecomplete_dashboard_url = env.get("FUTURECOMPLETE_DASHBOARD_URL") or "https://futurecomplete.inait.ai"
         self.futurecomplete_trial_users_url = env.get(
             "FUTURECOMPLETE_TRIAL_USERS_URL",

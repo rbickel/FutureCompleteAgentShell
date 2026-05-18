@@ -10,6 +10,10 @@ def test_inspect_sample_dataset_returns_metadata_only(agent_module, sample_datas
     assert metadata["sample_preview_rows"] <= agent_module.MAX_SAMPLE_ROWS
     assert "AAPL" in metadata["columns"]
     assert "MSFT" in metadata["columns"]
+    assert "Unnamed: 0" not in metadata["columns"]
+    assert metadata["index_name"] == "date"
+    assert metadata["suggested_target_columns"] == ["AAPL", "MSFT"]
+    assert metadata["default_target_column"] == "AAPL"
     assert metadata["dtypes"]["AAPL"].startswith("float")
 
     serialized = json.dumps(metadata)
@@ -21,11 +25,21 @@ def test_load_dataset_data_uses_openapi_data_object(agent_module, sample_dataset
     data = agent_module._load_dataset_data(sample_dataset_path)
 
     assert isinstance(data, dict)
-    assert "AAPL" in data
-    assert "MSFT" in data
-    assert "Unnamed: 0" in data
-    assert data["Unnamed: 0"]["0"] == "2015-08-03"
-    assert isinstance(data["AAPL"]["0"], float)
+    assert set(data) == {"columns", "index", "data"}
+    assert "AAPL" in data["columns"]
+    assert "MSFT" in data["columns"]
+    assert "Unnamed: 0" not in data["columns"]
+    assert "2015-08-03" in data["index"]
+    assert isinstance(data["data"][0][data["columns"].index("AAPL")], float)
+
+
+def test_sample_dataset_can_be_resolved_from_repo_root_when_cwd_is_src(agent_module, sample_dataset_path, monkeypatch):
+    monkeypatch.chdir(sample_dataset_path.parent / "src")
+
+    resolved_path, source_name = agent_module._resolve_dataset_path(None, sample_dataset_path.name)
+
+    assert resolved_path == sample_dataset_path.resolve()
+    assert source_name.endswith(sample_dataset_path.name)
 
 
 def test_forecast_payload_matches_public_openapi_schema(agent_module, sample_dataset_path):
@@ -45,8 +59,10 @@ def test_forecast_payload_matches_public_openapi_schema(agent_module, sample_dat
     assert payload["config"]["operation"] == "forecast"
     assert payload["config"]["operation_arguments"]["operation_type"] == "forecast"
     assert payload["config"]["operation_arguments"]["forecasting_horizon"] == 5
-    assert payload["config"]["operation_arguments"]["targets"] == ["AAPL", "MSFT"]
-    assert summary["data_columns"] == list(data.keys())
+    assert payload["config"]["operation_arguments"]["targets"] == "AAPL,MSFT"
+    assert payload["config"]["operation_arguments"]["features"] == "AAPL__hl,MSFT__hl"
+    assert summary["data_format"] == "pandas_split"
+    assert summary["data_columns"] == data["columns"]
     assert "AAPL" in summary["data_columns"]
     assert "2015-08-03" not in json.dumps(summary)
 
@@ -120,7 +136,7 @@ def test_session_id_can_be_extracted_from_nested_response_or_location(agent_modu
     assert agent_module._response_session_id({"response": {"session_id": "nested-123"}}) == "nested-123"
     assert (
         agent_module._response_session_id(
-            {"location": "https://inait-saas-apim-jjyzmt7v.azure-api.net/v1/sessions/location-123/status"}
+            {"location": "https://api.forecasting.inait.ai/v1/sessions/location-123/status"}
         )
         == "location-123"
     )
