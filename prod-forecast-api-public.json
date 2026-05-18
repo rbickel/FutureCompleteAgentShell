@@ -1,0 +1,1997 @@
+{
+    "openapi": "3.0.1",
+    "info": {
+        "title": "Forecasting API - Public",
+        "description": "Public API with curated endpoints for external consumers",
+        "version": "1.0"
+    },
+    "servers": [
+        {
+            "url": "https://inait-saas-apim-jjyzmt7v.azure-api.net"
+        }
+    ],
+    "paths": {
+        "/health": {
+            "get": {
+                "summary": "Health",
+                "description": "Health check endpoint.",
+                "operationId": "gethealth",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {}
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/prediction": {
+            "post": {
+                "summary": "Submit a forecast job",
+                "description": "External prediction endpoint with forecast-specific schema.\n\nFastAPI validates the PublicForecastRequest, providing clear OpenAPI\ndocumentation with all forecast parameters directly visible (no discriminated union).\nThe request is then converted to internal dict format for processing.",
+                "operationId": "submitforecast",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PublicForecastRequest"
+                            },
+                            "example": {
+                                "data": {},
+                                "config": {
+                                    "operation": "forecast",
+                                    "operation_arguments": {
+                                        "operation_type": "forecast",
+                                        "forecasting_horizon": {},
+                                        "targets": {},
+                                        "features": {},
+                                        "prediction_interval_levels": {},
+                                        "prediction_stride": 1,
+                                        "end_date": {},
+                                        "run_explain": false,
+                                        "include_genai_summary": false
+                                    }
+                                },
+                                "background": false
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Forecast completed synchronously",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PredictResponse"
+                                },
+                                "example": {
+                                    "response": {
+                                        "operation_type": "string",
+                                        "data": {},
+                                        "session_id": "string",
+                                        "resource_id": {},
+                                        "dataset_resource_id": {}
+                                    },
+                                    "status": "completed",
+                                    "error_details": {},
+                                    "logs": {}
+                                }
+                            }
+                        }
+                    },
+                    "202": {
+                        "description": "Forecast accepted, running in background. Poll the Location header URL for status.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PredictResponse"
+                                },
+                                "example": {
+                                    "response": {
+                                        "operation_type": "string",
+                                        "data": {},
+                                        "session_id": "string",
+                                        "resource_id": {},
+                                        "dataset_resource_id": {}
+                                    },
+                                    "status": "completed",
+                                    "error_details": {},
+                                    "logs": {}
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed request or invalid parameter values",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Access denied",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error — request parsed but field values are invalid",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/backtest": {
+            "post": {
+                "summary": "Submit a backtest job",
+                "description": "External backtest endpoint with backtest-specific schema.\n\nEvaluates forecast model accuracy using historical data with walk-forward validation.\n\nThe PublicBacktestRequest provides clear OpenAPI documentation with backtest-specific\nparameters (backtest_size, start_date) directly visible (no discriminated union).",
+                "operationId": "submitbacktest",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PublicBacktestRequest"
+                            },
+                            "example": {
+                                "data": {},
+                                "config": {
+                                    "operation": "backtest",
+                                    "operation_arguments": {
+                                        "operation_type": "backtest",
+                                        "forecasting_horizon": {},
+                                        "targets": {},
+                                        "features": {},
+                                        "prediction_interval_levels": {},
+                                        "prediction_stride": 1,
+                                        "end_date": {},
+                                        "run_explain": false,
+                                        "include_genai_summary": false,
+                                        "backtest_size": {},
+                                        "start_date": {}
+                                    }
+                                },
+                                "background": false
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Backtest completed synchronously",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PredictResponse"
+                                },
+                                "example": {
+                                    "response": {
+                                        "operation_type": "string",
+                                        "data": {},
+                                        "session_id": "string",
+                                        "resource_id": {},
+                                        "dataset_resource_id": {}
+                                    },
+                                    "status": "completed",
+                                    "error_details": {},
+                                    "logs": {}
+                                }
+                            }
+                        }
+                    },
+                    "202": {
+                        "description": "Backtest accepted, running in background. Poll the Location header URL for status.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PredictResponse"
+                                },
+                                "example": {
+                                    "response": {
+                                        "operation_type": "string",
+                                        "data": {},
+                                        "session_id": "string",
+                                        "resource_id": {},
+                                        "dataset_resource_id": {}
+                                    },
+                                    "status": "completed",
+                                    "error_details": {},
+                                    "logs": {}
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed request or invalid parameter values",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Access denied",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error — request parsed but field values are invalid",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/benchmark": {
+            "post": {
+                "summary": "Submit a benchmark job",
+                "description": "External benchmark endpoint for multi-model comparison.\n\nBenchmark operations default to background=True since they are long-running.",
+                "operationId": "submitbenchmark",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PublicBenchmarkRequest"
+                            },
+                            "example": {
+                                "data": {},
+                                "config": {
+                                    "operation": "benchmark",
+                                    "operation_arguments": {
+                                        "operation_type": "benchmark",
+                                        "backtest_config": {
+                                            "operation_type": "backtest",
+                                            "forecasting_horizon": {},
+                                            "targets": {},
+                                            "features": {},
+                                            "prediction_interval_levels": {},
+                                            "prediction_stride": 1,
+                                            "end_date": {},
+                                            "run_explain": false,
+                                            "include_genai_summary": false,
+                                            "backtest_size": {},
+                                            "start_date": {}
+                                        }
+                                    }
+                                },
+                                "background": true
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "202": {
+                        "description": "Benchmark accepted, running in background. Poll the Location header URL for status.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PredictResponse"
+                                },
+                                "example": {
+                                    "response": {
+                                        "operation_type": "string",
+                                        "data": {},
+                                        "session_id": "string",
+                                        "resource_id": {},
+                                        "dataset_resource_id": {}
+                                    },
+                                    "status": "completed",
+                                    "error_details": {},
+                                    "logs": {}
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed request or invalid parameter values",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Access denied",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error — request parsed but field values are invalid",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{session_id}/status": {
+            "get": {
+                "summary": "Get job status",
+                "description": "Get the status of a background task.",
+                "operationId": "getjobstatus",
+                "parameters": [
+                    {
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Task status",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PredictResponse"
+                                },
+                                "example": {
+                                    "response": {
+                                        "operation_type": "string",
+                                        "data": {},
+                                        "session_id": "string",
+                                        "resource_id": {},
+                                        "dataset_resource_id": {}
+                                    },
+                                    "status": "completed",
+                                    "error_details": {},
+                                    "logs": {}
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Access denied",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                },
+                                "example": {
+                                    "detail": [
+                                        {
+                                            "loc": [
+                                                {}
+                                            ],
+                                            "msg": "string",
+                                            "type": "string"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{session_id}/result": {
+            "get": {
+                "summary": "Get job result",
+                "description": "Get the result of a completed background task.\n\nApplies external response filtering as defense-in-depth: even though workflows\nsubmitted via the external API produce filtered responses, this ensures results\nretrieved via this endpoint always have internal-only fields stripped.",
+                "operationId": "getjobresult",
+                "parameters": [
+                    {
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Task result",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PredictResponse"
+                                },
+                                "example": {
+                                    "response": {
+                                        "operation_type": "string",
+                                        "data": {},
+                                        "session_id": "string",
+                                        "resource_id": {},
+                                        "dataset_resource_id": {}
+                                    },
+                                    "status": "completed",
+                                    "error_details": {},
+                                    "logs": {}
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Access denied",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                },
+                                "example": {
+                                    "detail": [
+                                        {
+                                            "loc": [
+                                                {}
+                                            ],
+                                            "msg": "string",
+                                            "type": "string"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/artifacts/{resource_id}": {
+            "get": {
+                "summary": "Download session resource",
+                "description": "Generate a temporary download link for forecast/backtest results or input data.\n\n**Supported resource types:**\n- `response:{session_id}` — Forecast/backtest results as **JSON** (.json)\n- `data:{session_id}` — Input dataset as **Parquet** (.parquet)\n\n**File formats** (type-specific serialization):\n| Prefix | Format | Use with |\n|--------|--------|----------|\n| `response:` | JSON | Any JSON viewer, text editor, or programming language |\n| `data:` | Parquet | pandas, PySpark, DuckDB, or other columnar data tools |\n\nReturns HTTP 302 redirect to a time-limited Azure Blob SAS URL.\nThe client should follow the redirect to download the file directly from storage.",
+                "operationId": "downloadartifact",
+                "parameters": [
+                    {
+                        "name": "resource_id",
+                        "in": "path",
+                        "description": "Session artifact ID with type prefix. Format: `{type}:{session_id}` where type is `response` or `data`.",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to download URL. Follow the Location header to download the resource."
+                    },
+                    "400": {
+                        "description": "Invalid resource ID. Must use `response:` or `data:` prefix.",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Access denied",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found in storage",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                },
+                                "example": {
+                                    "detail": [
+                                        {
+                                            "loc": [
+                                                {}
+                                            ],
+                                            "msg": "string",
+                                            "type": "string"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "501": {
+                        "description": "Storage backend doesn't support shareable links",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{session_id}/cancel": {
+            "post": {
+                "summary": "Cancel a running job",
+                "description": "Cancel a running workflow by its session ID.",
+                "operationId": "canceljob",
+                "parameters": [
+                    {
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Cancellation requested",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CancelResponse"
+                                },
+                                "example": {
+                                    "status": "success",
+                                    "message": "string",
+                                    "session_id": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication required",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Access denied",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found or already completed",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                },
+                                "example": {
+                                    "detail": [
+                                        {
+                                            "loc": [
+                                                {}
+                                            ],
+                                            "msg": "string",
+                                            "type": "string"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                },
+                                "example": {
+                                    "type": "about:blank",
+                                    "title": "string",
+                                    "status": 0,
+                                    "detail": "string",
+                                    "instance": {},
+                                    "code": "VALIDATION_ERROR",
+                                    "context": {},
+                                    "errors": {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "BacktestResponse": {
+                "title": "BacktestResponse",
+                "required": [
+                    "operation_type",
+                    "data",
+                    "session_id"
+                ],
+                "type": "object",
+                "properties": {
+                    "operation_type": {
+                        "title": "Operation Type",
+                        "type": "string"
+                    },
+                    "data": {
+                        "title": "Data",
+                        "type": "object"
+                    },
+                    "session_id": {
+                        "title": "Session Id",
+                        "type": "string"
+                    },
+                    "resource_id": {
+                        "title": "Resource Id",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "dataset_resource_id": {
+                        "title": "Dataset Resource Id",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    }
+                }
+            },
+            "BenchmarkResponse": {
+                "title": "BenchmarkResponse",
+                "required": [
+                    "operation_type",
+                    "data",
+                    "session_id"
+                ],
+                "type": "object",
+                "properties": {
+                    "operation_type": {
+                        "title": "Operation Type",
+                        "type": "string"
+                    },
+                    "data": {
+                        "title": "Data",
+                        "type": "object"
+                    },
+                    "session_id": {
+                        "title": "Session Id",
+                        "type": "string"
+                    },
+                    "resource_id": {
+                        "title": "Resource Id",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "dataset_resource_id": {
+                        "title": "Dataset Resource Id",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    }
+                },
+                "description": "Response model for benchmark operations.\n\nContains the full backtest results for the primary model (from backtest_config.forecaster)\nplus a scores comparison dictionary for all comparison models, wrapped in a `data` field\nfor consistency with ForecastResponse and BacktestResponse (REQ-P2-4.2).\n\nAttributes:\n    operation_type: Discriminator field, always \"benchmark\"\n    data: Dict containing \"backtest\" and \"model_scores\" keys. Empty {} when offloaded.\n          - backtest: Dict mapping PRIMARY model name to its full backtest data\n          - model_scores: Mapping of COMPARISON model name to scores dict\n    session_id: Session identifier for result retrieval\n    resource_id: Optional resource ID for large data offloading (set when data is offloaded)\n    dataset_resource_id: Resource ID for the input dataset (e.g., \"data:session_id\")\n\nNote on Offloading Consistency (REQ-P2-4.2):\n    This structure matches ForecastResponse and BacktestResponse:\n    - When data is inline: data={...}, resource_id=None\n    - When data is offloaded: data={}, resource_id=\"response:session_id\"\n    Use _ensure_data_loaded() to transparently fetch offloaded data.\n\nExample response (inline data):\n    {\n        \"operation_type\": \"benchmark\",\n        \"data\": {\n            \"backtest\": {\n                \"catboost\": {\n                    \"predictions\": [...],\n                    \"scores\": {...},\n                    \"explain\": {...}\n                }\n            },\n            \"model_scores\": {\n                \"lgbm\": {\"mape\": 0.12, \"rmse\": 0.45},\n                \"ridge\": {\"mape\": 0.15, \"rmse\": 0.52}\n            }\n        },\n        \"session_id\": \"abc123\",\n        \"resource_id\": null\n    }\n\nExample response (offloaded data):\n    {\n        \"operation_type\": \"benchmark\",\n        \"data\": {},\n        \"session_id\": \"abc123\",\n        \"resource_id\": \"response:abc123\"\n    }"
+            },
+            "ForecastResponse": {
+                "title": "ForecastResponse",
+                "required": [
+                    "operation_type",
+                    "data",
+                    "session_id"
+                ],
+                "type": "object",
+                "properties": {
+                    "operation_type": {
+                        "title": "Operation Type",
+                        "type": "string"
+                    },
+                    "data": {
+                        "title": "Data",
+                        "type": "object"
+                    },
+                    "session_id": {
+                        "title": "Session Id",
+                        "type": "string"
+                    },
+                    "resource_id": {
+                        "title": "Resource Id",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "dataset_resource_id": {
+                        "title": "Dataset Resource Id",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    }
+                }
+            },
+            "HTTPValidationError": {
+                "title": "HTTPValidationError",
+                "type": "object",
+                "properties": {
+                    "detail": {
+                        "title": "Detail",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/ValidationError"
+                        }
+                    }
+                }
+            },
+            "PredictResponse": {
+                "title": "PredictResponse",
+                "required": [
+                    "response"
+                ],
+                "type": "object",
+                "properties": {
+                    "response": {
+                        "title": "Response",
+                        "oneOf": [
+                            {
+                                "$ref": "#/components/schemas/ForecastResponse"
+                            },
+                            {
+                                "$ref": "#/components/schemas/BacktestResponse"
+                            },
+                            {
+                                "$ref": "#/components/schemas/BenchmarkResponse"
+                            }
+                        ],
+                        "discriminator": {
+                            "propertyName": "operation_type",
+                            "mapping": {
+                                "backtest": "#/components/schemas/BacktestResponse",
+                                "benchmark": "#/components/schemas/BenchmarkResponse",
+                                "forecast": "#/components/schemas/ForecastResponse"
+                            }
+                        }
+                    },
+                    "status": {
+                        "title": "Status",
+                        "type": "string",
+                        "default": "completed"
+                    },
+                    "error_details": {
+                        "title": "Error Details",
+                        "anyOf": [
+                            {
+                                "type": "object"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "logs": {
+                        "title": "Logs",
+                        "anyOf": [
+                            {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    }
+                }
+            },
+            "PublicBacktestConfig": {
+                "title": "PublicBacktestConfig",
+                "required": [
+                    "operation_arguments"
+                ],
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "title": "Operation",
+                        "type": "string",
+                        "description": "Operation type",
+                        "default": "backtest"
+                    },
+                    "operation_arguments": {
+                        "$ref": "#/components/schemas/PublicBacktestOperationArguments"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "PublicBacktestOperationArguments": {
+                "title": "PublicBacktestOperationArguments",
+                "type": "object",
+                "properties": {
+                    "operation_type": {
+                        "title": "Operation Type",
+                        "type": "string",
+                        "description": "Operation type identifier.",
+                        "default": "backtest"
+                    },
+                    "forecasting_horizon": {
+                        "title": "Forecasting Horizon",
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "The number of time steps to forecast. Optional - will use default if not specified."
+                    },
+                    "targets": {
+                        "title": "Targets",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "array",
+                                "items": {}
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Comma-separated list of target columns. Optional - will use default if not specified."
+                    },
+                    "features": {
+                        "title": "Features",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "array",
+                                "items": {}
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Comma-separated list of feature columns. Optional - will use default if not specified."
+                    },
+                    "prediction_interval_levels": {
+                        "title": "Prediction Interval Levels",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Comma-separated list of prediction interval levels. Optional - will use default if not specified."
+                    },
+                    "prediction_stride": {
+                        "title": "Prediction Stride",
+                        "type": "integer",
+                        "description": "The stride length for training and prediction windows.",
+                        "default": 1
+                    },
+                    "end_date": {
+                        "title": "End Date",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Optional end date for the data to consider for forecasting. If provided, data beyond this date will be ignored."
+                    },
+                    "run_explain": {
+                        "title": "Run Explain",
+                        "anyOf": [
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Whether to compute feature importance explanations during backtest. Defaults to False.",
+                        "default": false
+                    },
+                    "include_genai_summary": {
+                        "title": "Include Genai Summary",
+                        "type": "boolean",
+                        "description": "Whether to generate GenAI natural language summary of explanations. Requires run_explain=True and LLM configuration.",
+                        "default": false
+                    },
+                    "backtest_size": {
+                        "title": "Backtest Size",
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Total size of the backtest data. Optional - will use default if not specified."
+                    },
+                    "start_date": {
+                        "title": "Start Date",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Start timestamp for the backtest. Must be provided together with end_date. Mutually exclusive with backtest_size (unless derived from previous run)."
+                    }
+                },
+                "additionalProperties": false
+            },
+            "PublicBacktestRequest": {
+                "title": "PublicBacktestRequest",
+                "required": [
+                    "config"
+                ],
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "title": "Data",
+                        "anyOf": [
+                            {
+                                "type": "object"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Raw data for the operation as a dictionary/object."
+                    },
+                    "config": {
+                        "$ref": "#/components/schemas/PublicBacktestConfig"
+                    },
+                    "background": {
+                        "title": "Background",
+                        "type": "boolean",
+                        "description": "Whether to run the operation in the background.",
+                        "default": false
+                    }
+                },
+                "additionalProperties": false,
+                "description": "Request body for public /backtest endpoint.\n\nThis endpoint-specific model provides clearer OpenAPI documentation\nby avoiding discriminated unions. Backtest-specific parameters like\nbacktest_size and start_date are directly visible in the API docs."
+            },
+            "PublicBenchmarkConfig": {
+                "title": "PublicBenchmarkConfig",
+                "required": [
+                    "operation_arguments"
+                ],
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "title": "Operation",
+                        "type": "string",
+                        "description": "Operation type",
+                        "default": "benchmark"
+                    },
+                    "operation_arguments": {
+                        "$ref": "#/components/schemas/PublicBenchmarkOperationArguments"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "PublicBenchmarkOperationArguments": {
+                "title": "PublicBenchmarkOperationArguments",
+                "required": [
+                    "backtest_config"
+                ],
+                "type": "object",
+                "properties": {
+                    "operation_type": {
+                        "title": "Operation Type",
+                        "type": "string",
+                        "description": "Discriminator field for union type detection",
+                        "default": "benchmark"
+                    },
+                    "backtest_config": {
+                        "$ref": "#/components/schemas/PublicBacktestOperationArguments"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "PublicBenchmarkRequest": {
+                "title": "PublicBenchmarkRequest",
+                "required": [
+                    "config"
+                ],
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "title": "Data",
+                        "anyOf": [
+                            {
+                                "type": "object"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Raw data for the operation as a dictionary/object."
+                    },
+                    "config": {
+                        "$ref": "#/components/schemas/PublicBenchmarkConfig"
+                    },
+                    "background": {
+                        "title": "Background",
+                        "type": "boolean",
+                        "description": "Whether to run the operation in the background. Defaults to True for benchmark.",
+                        "default": true
+                    }
+                },
+                "additionalProperties": false,
+                "description": "Request body for public /benchmark endpoint.\n\nRuns multi-model benchmark comparison using the primary model defined in\nbacktest_config.forecaster against default comparison models.\n\nNOTE: The 'models' field is NOT exposed in the public API. External consumers\nalways use the default comparison models: [\"flowstate\", \"chronos\", \"ridge\",\n\"mean_forecaster\", \"naive\"]. Internal API users can specify custom comparison\nmodels via the full ToolsMsg schema at /internal/benchmark.\n\nBenchmark operations default to background=True since they are long-running."
+            },
+            "PublicForecastConfig": {
+                "title": "PublicForecastConfig",
+                "required": [
+                    "operation_arguments"
+                ],
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "title": "Operation",
+                        "type": "string",
+                        "description": "Operation type",
+                        "default": "forecast"
+                    },
+                    "operation_arguments": {
+                        "$ref": "#/components/schemas/PublicForecastOperationArguments"
+                    }
+                },
+                "additionalProperties": false
+            },
+            "PublicForecastOperationArguments": {
+                "title": "PublicForecastOperationArguments",
+                "type": "object",
+                "properties": {
+                    "operation_type": {
+                        "title": "Operation Type",
+                        "type": "string",
+                        "description": "Operation type identifier.",
+                        "default": "forecast"
+                    },
+                    "forecasting_horizon": {
+                        "title": "Forecasting Horizon",
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "The number of time steps to forecast. Optional - will use default if not specified."
+                    },
+                    "targets": {
+                        "title": "Targets",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "array",
+                                "items": {}
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Comma-separated list of target columns. Optional - will use default if not specified."
+                    },
+                    "features": {
+                        "title": "Features",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "array",
+                                "items": {}
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Comma-separated list of feature columns. Optional - will use default if not specified."
+                    },
+                    "prediction_interval_levels": {
+                        "title": "Prediction Interval Levels",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Comma-separated list of prediction interval levels. Optional - will use default if not specified."
+                    },
+                    "prediction_stride": {
+                        "title": "Prediction Stride",
+                        "type": "integer",
+                        "description": "The stride length for training and prediction windows.",
+                        "default": 1
+                    },
+                    "end_date": {
+                        "title": "End Date",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Optional end date for the data to consider for forecasting. If provided, data beyond this date will be ignored."
+                    },
+                    "run_explain": {
+                        "title": "Run Explain",
+                        "type": "boolean",
+                        "description": "Whether to run explainability analysis. Defaults to False.",
+                        "default": false
+                    },
+                    "include_genai_summary": {
+                        "title": "Include Genai Summary",
+                        "type": "boolean",
+                        "description": "Whether to generate GenAI natural language summary of explanations. Requires run_explain=True and LLM configuration.",
+                        "default": false
+                    }
+                },
+                "additionalProperties": false
+            },
+            "PublicForecastRequest": {
+                "title": "PublicForecastRequest",
+                "required": [
+                    "config"
+                ],
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "title": "Data",
+                        "anyOf": [
+                            {
+                                "type": "object"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "description": "Raw data for the operation as a dictionary/object."
+                    },
+                    "config": {
+                        "$ref": "#/components/schemas/PublicForecastConfig"
+                    },
+                    "background": {
+                        "title": "Background",
+                        "type": "boolean",
+                        "description": "Whether to run the operation in the background.",
+                        "default": false
+                    }
+                },
+                "additionalProperties": false,
+                "description": "Request body for public /prediction endpoint.\n\nThis endpoint-specific model provides clearer OpenAPI documentation\nby avoiding discriminated unions. All forecast parameters are\ndirectly visible in the API docs."
+            },
+            "ValidationError": {
+                "title": "ValidationError",
+                "required": [
+                    "loc",
+                    "msg",
+                    "type"
+                ],
+                "type": "object",
+                "properties": {
+                    "loc": {
+                        "title": "Location",
+                        "type": "array",
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "integer"
+                                }
+                            ]
+                        }
+                    },
+                    "msg": {
+                        "title": "Message",
+                        "type": "string"
+                    },
+                    "type": {
+                        "title": "Error Type",
+                        "type": "string"
+                    }
+                }
+            },
+            "CancelResponse": {
+                "title": "CancelResponse",
+                "required": [
+                    "status",
+                    "message",
+                    "session_id"
+                ],
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "title": "Status",
+                        "enum": [
+                            "success",
+                            "error"
+                        ],
+                        "type": "string"
+                    },
+                    "message": {
+                        "title": "Message",
+                        "type": "string"
+                    },
+                    "session_id": {
+                        "title": "Session Id",
+                        "type": "string"
+                    }
+                },
+                "description": "Response for a successful job cancellation request."
+            },
+            "ErrorCode": {
+                "title": "ErrorCode",
+                "enum": [
+                    "VALIDATION_ERROR",
+                    "INTERNAL_ERROR",
+                    "NOT_FOUND",
+                    "FORBIDDEN",
+                    "NOT_IMPLEMENTED",
+                    "INVALID_RESOURCE_ID",
+                    "INVALID_JSON",
+                    "AUTH_REQUIRED"
+                ],
+                "type": "string"
+            },
+            "ErrorResponse": {
+                "title": "ErrorResponse",
+                "required": [
+                    "title",
+                    "status",
+                    "detail",
+                    "code"
+                ],
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "title": "Type",
+                        "type": "string",
+                        "default": "about:blank"
+                    },
+                    "title": {
+                        "title": "Title",
+                        "type": "string"
+                    },
+                    "status": {
+                        "title": "Status",
+                        "type": "integer"
+                    },
+                    "detail": {
+                        "title": "Detail",
+                        "type": "string"
+                    },
+                    "instance": {
+                        "title": "Instance",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "code": {
+                        "$ref": "#/components/schemas/ErrorCode"
+                    },
+                    "context": {
+                        "title": "Context",
+                        "anyOf": [
+                            {
+                                "type": "object"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "errors": {
+                        "title": "Errors",
+                        "anyOf": [
+                            {
+                                "type": "array",
+                                "items": {
+                                    "type": "object"
+                                }
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    }
+                },
+                "description": "RFC 9457 Problem Details response for consistent API errors."
+            },
+            "WorkflowErrorDetails": {
+                "title": "WorkflowErrorDetails",
+                "required": [
+                    "status"
+                ],
+                "type": "object",
+                "properties": {
+                    "error_type": {
+                        "title": "Error Type",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "error_message": {
+                        "title": "Error Message",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "workflow_name": {
+                        "title": "Workflow Name",
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "status": {
+                        "title": "Status",
+                        "type": "string"
+                    },
+                    "recovery_attempts": {
+                        "title": "Recovery Attempts",
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "created_at": {
+                        "title": "Created At",
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    },
+                    "updated_at": {
+                        "title": "Updated At",
+                        "anyOf": [
+                            {
+                                "type": "integer"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ]
+                    }
+                },
+                "description": "Structured error information for a failed DBOS workflow.\n\nFields are partitioned by external visibility. New fields default to internal-only;\nadd to _EXTERNAL_FIELDS only when safe to expose to external consumers."
+            }
+        },
+        "securitySchemes": {
+            "apiKeyHeader": {
+                "type": "apiKey",
+                "name": "Ocp-Apim-Subscription-Key",
+                "in": "header"
+            },
+            "apiKeyQuery": {
+                "type": "apiKey",
+                "name": "subscription-key",
+                "in": "query"
+            }
+        }
+    },
+    "security": [
+        {
+            "apiKeyHeader": []
+        },
+        {
+            "apiKeyQuery": []
+        }
+    ]
+}

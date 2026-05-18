@@ -25,3 +25,10 @@ deploy:
         AZURE_OPENAI_API_KEY: ${{SECRET_AZURE_OPENAI_API_KEY}}
         AZURE_OPENAI_DEPLOYMENT_NAME: ${{AZURE_OPENAI_DEPLOYMENT_NAME}}
         AZURE_OPENAI_ENDPOINT: ${{AZURE_OPENAI_ENDPOINT}}
+        FUTURECOMPLETE_API_BASE_URL: https://inait-saas-apim-jjyzmt7v.azure-api.net
+        FUTURECOMPLETE_DASHBOARD_URL: https://futurecomplete.inait.ai
+        FUTURECOMPLETE_TRIAL_USERS_URL: https://api.forecasting.inait.ai/users/dev/users
+        FUTURECOMPLETE_TRIAL_PLAN_ID: trial
+        FUTURECOMPLETE_JOB_STATUS_PATH_TEMPLATE: /v1/sessions/{session_id}/status
+        FUTURECOMPLETE_JOB_RESULT_PATH_TEMPLATE: /v1/sessions/{session_id}/result
+        FUTURECOMPLETE_JOB_CANCEL_PATH_TEMPLATE: /v1/sessions/{session_id}/cancel

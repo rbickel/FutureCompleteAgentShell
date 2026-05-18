@@ -14,6 +14,27 @@
     "azureOpenaiEndpoint" : {
       "value": "${{AZURE_OPENAI_ENDPOINT}}"
     },
+    "futurecompleteApiBaseUrl": {
+      "value": "https://inait-saas-apim-jjyzmt7v.azure-api.net"
+    },
+    "futurecompleteDashboardUrl": {
+      "value": "https://futurecomplete.inait.ai"
+    },
+    "futurecompleteTrialUsersUrl": {
+      "value": "https://api.forecasting.inait.ai/users/dev/users"
+    },
+    "futurecompleteTrialPlanId": {
+      "value": "trial"
+    },
+    "futurecompleteJobStatusPathTemplate": {
+      "value": "/v1/sessions/{session_id}/status"
+    },
+    "futurecompleteJobResultPathTemplate": {
+      "value": "/v1/sessions/{session_id}/result"
+    },
+    "futurecompleteJobCancelPathTemplate": {
+      "value": "/v1/sessions/{session_id}/cancel"
+    },
     "webAppSKU": {
       "value": "B1"
     },

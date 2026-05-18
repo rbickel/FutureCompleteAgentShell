@@ -14,12 +14,12 @@
         "outline": "outline.png"
     },
     "name": {
-        "short": "FutureCompleteAgentShell${{APP_NAME_SUFFIX}}",
-        "full": "full name for FutureCompleteAgentShell"
+        "short": "FutureComplete${{APP_NAME_SUFFIX}}",
+        "full": "FutureComplete Forecasting Agent"
     },
     "description": {
-        "short": "short description for FutureCompleteAgentShell",
-        "full": "full description for FutureCompleteAgentShell"
+        "short": "Prepare forecasts and backtests from Teams.",
+        "full": "FutureComplete helps Teams users prepare forecasting and backtesting jobs, upload time-series datasets, configure parameters, and inspect completed results in the FutureComplete dashboard."
     },
     "accentColor": "#FFFFFF",
     "supportsChannelFeatures": "tier1",
@@ -40,12 +40,20 @@
                     ],
                     "commands": [
                         {
-                            "title": "What tools do you have access to?",
-                            "description": "List the tools available to this agent."
+                            "title": "Start a forecast",
+                            "description": "Generate future predictions from an uploaded time-series dataset."
                         },
                         {
-                            "title": "What day is it today?",
-                            "description": "Ask the agent to call the get_day_of_week tool."
+                            "title": "Run a backtest",
+                            "description": "Evaluate historical predictive performance for a dataset."
+                        },
+                        {
+                            "title": "Show my jobs",
+                            "description": "List recent FutureComplete jobs and dashboard links when available."
+                        },
+                        {
+                            "title": "Clear chat",
+                            "description": "Clear the current conversation and start over."
                         }
                     ]
                 }
@@ -59,5 +67,8 @@
         "identity",
         "messageTeamMembers"
     ],
-    "validDomains": []
+    "validDomains": [
+        "futurecomplete.inait.ai",
+        "github.com"
+    ]
 }

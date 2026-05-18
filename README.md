@@ -16,10 +16,12 @@ This template showcases a custom engine agent app that connects to your own LLM 
 > - A [Microsoft 365 account for development](https://docs.microsoft.com/microsoftteams/platform/toolkit/accounts).
 
 ### Configurations
+
 1. Open the command box and enter `Python: Create Environment` to create and activate your desired virtual environment. Remember to select `src/requirements.txt` as dependencies to install when creating the virtual environment.
 1. In file *env/.env.local.user*, fill in your Azure OpenAI key `SECRET_AZURE_OPENAI_API_KEY`, deployment name `AZURE_OPENAI_DEPLOYMENT_NAME` and endpoint `AZURE_OPENAI_ENDPOINT`.
 
 ### Conversation with agent
+
 1. Select the Microsoft 365 Agents Toolkit icon on the left in the VS Code toolbar.
 1. In the Account section, sign in with your [Microsoft 365 account](https://docs.microsoft.com/microsoftteams/platform/toolkit/accounts) if you haven't already.
 1. Press F5 to start debugging which launches your app in Teams using a web browser. Select `Debug in Teams (Edge)` or `Debug in Teams (Chrome)`.
@@ -32,24 +34,45 @@ This template showcases a custom engine agent app that connects to your own LLM 
 
 ![ai chat agent](https://user-images.githubusercontent.com/7642967/258726187-8306610b-579e-4301-872b-1b5e85141eff.png)
 
+### Tests and evaluations
+
+Install development dependencies:
+
+```powershell
+pip install -r requirements-dev.txt
+```
+
+Run the unit tests:
+
+```powershell
+pytest
+```
+
+Run the offline end-to-end evaluation for the FutureComplete single-agent flow:
+
+```powershell
+python evals/futurecomplete_e2e_eval.py --json
+```
+
+The tests and evaluations use `dataset_GKYZ_2016_AAPL_MSFT_trimmed.csv` as the sample input dataset. Backend calls are mocked by default, so the suite validates request shape, trial gating, job cancellation, and agent-flow behavior without calling production APIs.
+
 ## What's included in the template
 
-| Folder       | Contents                                            |
-| - | - |
-| `.vscode/`   | VS Code files for debugging                         |
-| `appPackage/` | Templates for the Teams application manifest        |
-| `env/`       | Environment files                                   |
-| `infra/`     | Templates for provisioning Azure resources          |
-| `src/`       | The source code for the application                 |
+| Folder        | Contents                                     |
+|---------------|----------------------------------------------|
+| `.vscode/`    | VS Code files for debugging                  |
+| `appPackage/` | Templates for the Teams application manifest |
+| `env/`        | Environment files                            |
+| `infra/`      | Templates for provisioning Azure resources   |
+| `src/`        | The source code for the application          |
 
 The following files can be customized and demonstrate an example implementation to get you started.
 
-| File                                 | Contents                                           |
-| - | - |
-|`src/agent.py`| Handles the agent app logic, built with Microsoft 365 Agents SDK.|
-|`src/config.py`| Defines the environment variables.|
-|`src/app.py`| Hosts the agent using aiohttp|
-
+| File            | Contents                                                              |
+|-----------------|-----------------------------------------------------------------------|
+| `src/agent.py`  | Handles the agent app logic, built with Microsoft 365 Agents SDK.     |
+| `src/config.py` | Defines the environment variables.                                    |
+| `src/app.py`    | Hosts the agent using aiohttp.                                        |
 
 ## Additional information and references
 

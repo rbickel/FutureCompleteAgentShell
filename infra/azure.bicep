@@ -8,6 +8,13 @@ param resourceBaseName string
 param azureOpenaiKey string
 param azureOpenaiModelDeploymentName string
 param azureOpenaiEndpoint string
+param futurecompleteApiBaseUrl string = 'https://inait-saas-apim-jjyzmt7v.azure-api.net'
+param futurecompleteDashboardUrl string = 'https://futurecomplete.inait.ai'
+param futurecompleteTrialUsersUrl string = 'https://api.forecasting.inait.ai/users/dev/users'
+param futurecompleteTrialPlanId string = 'trial'
+param futurecompleteJobStatusPathTemplate string = '/v1/sessions/{session_id}/status'
+param futurecompleteJobResultPathTemplate string = '/v1/sessions/{session_id}/result'
+param futurecompleteJobCancelPathTemplate string = '/v1/sessions/{session_id}/cancel'
 
 param webAppSKU string
 param linuxFxVersion string
@@ -86,6 +93,34 @@ resource webApp 'Microsoft.Web/sites@2021-02-01' = {
         {
           name: 'AZURE_OPENAI_ENDPOINT'
           value: azureOpenaiEndpoint
+        }
+        {
+          name: 'FUTURECOMPLETE_API_BASE_URL'
+          value: futurecompleteApiBaseUrl
+        }
+        {
+          name: 'FUTURECOMPLETE_DASHBOARD_URL'
+          value: futurecompleteDashboardUrl
+        }
+        {
+          name: 'FUTURECOMPLETE_TRIAL_USERS_URL'
+          value: futurecompleteTrialUsersUrl
+        }
+        {
+          name: 'FUTURECOMPLETE_TRIAL_PLAN_ID'
+          value: futurecompleteTrialPlanId
+        }
+        {
+          name: 'FUTURECOMPLETE_JOB_STATUS_PATH_TEMPLATE'
+          value: futurecompleteJobStatusPathTemplate
+        }
+        {
+          name: 'FUTURECOMPLETE_JOB_RESULT_PATH_TEMPLATE'
+          value: futurecompleteJobResultPathTemplate
+        }
+        {
+          name: 'FUTURECOMPLETE_JOB_CANCEL_PATH_TEMPLATE'
+          value: futurecompleteJobCancelPathTemplate
         }
         {
           name: 'BOT_TENANT_ID'
