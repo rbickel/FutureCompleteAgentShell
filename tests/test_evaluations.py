@@ -17,4 +17,5 @@ def test_offline_e2e_evaluations_pass(repo_root, sample_dataset_path):
         "trial_backtest_flow",
         "full_license_forecast_and_benchmark_flow",
         "cancel_running_job_flow",
+        "result_retrieval_flow",
     }

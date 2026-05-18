@@ -24,6 +24,7 @@ from microsoft_agents.hosting.core import (
 from microsoft_agents.activity import (
     load_configuration_from_env,
     ActivityTypes,
+    Activity,
 )
 from microsoft_agents.hosting.aiohttp import CloudAdapter
 from microsoft_agents.authentication.msal import MsalConnectionManager
@@ -41,6 +42,8 @@ from config import Config
 
 MAX_DATASET_BYTES = 200 * 1024 * 1024
 MAX_SAMPLE_ROWS = 5
+MAX_RESULT_TABLE_ROWS = 20
+MAX_RESULT_TABLE_COLUMNS = 12
 SUPPORTED_DATASET_SUFFIXES = {".csv", ".xlsx", ".parquet"}
 TRIAL_LIMITATION_TEXT = "Trial subscriptions only allow Backtest jobs through /v1/backtest. They do not allow Forecast jobs through /v1/prediction or Benchmark jobs through /v1/benchmark."
 TERMINAL_JOB_STATUSES = {"completed", "complete", "succeeded", "success", "failed", "error", "cancelled", "canceled"}
@@ -752,9 +755,45 @@ def _summarize_api_response(response: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _is_split_table(value: Any) -> bool:
+    return isinstance(value, dict) and {"index", "columns", "data"}.issubset(value.keys()) and isinstance(value.get("columns"), list) and isinstance(value.get("data"), list)
+
+
+def _split_table_rows(value: dict[str, Any], max_rows: int = MAX_RESULT_TABLE_ROWS, max_columns: int = MAX_RESULT_TABLE_COLUMNS) -> list[dict[str, Any]]:
+    columns = [str(column) for column in value.get("columns", [])][:max_columns]
+    raw_indexes = value.get("index")
+    indexes = raw_indexes if isinstance(raw_indexes, list) else []
+    rows = []
+    for row_index, row_values in enumerate(value.get("data", [])[:max_rows]):
+        if not isinstance(row_values, list):
+            continue
+        row: dict[str, Any] = {}
+        if row_index < len(indexes):
+            row["index"] = indexes[row_index]
+        for column, cell in zip(columns, row_values[:max_columns]):
+            row[column] = cell
+        rows.append(row)
+    return rows
+
+
+def _summarize_split_table(value: dict[str, Any]) -> dict[str, Any]:
+    columns = [str(column) for column in value.get("columns", [])]
+    data = value.get("data", [])
+    return {
+        "type": "table",
+        "row_count": len(data),
+        "column_count": len(columns),
+        "columns": columns[:MAX_RESULT_TABLE_COLUMNS],
+        "rows": _split_table_rows(value),
+        "truncated": len(data) > MAX_RESULT_TABLE_ROWS or len(columns) > MAX_RESULT_TABLE_COLUMNS,
+    }
+
+
 def _summarize_result_value(value: Any, depth: int = 0) -> Any:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
+    if _is_split_table(value):
+        return _summarize_split_table(value)
     if depth >= 2:
         if isinstance(value, dict):
             return {"type": "object", "keys": list(value.keys())[:10], "key_count": len(value)}
@@ -767,8 +806,11 @@ def _summarize_result_value(value: Any, depth: int = 0) -> Any:
         summary: dict[str, Any] = {"type": "array", "count": len(value)}
         if value:
             first = value[0]
-            if isinstance(first, dict):
+            if _is_split_table(first):
+                summary["tables"] = [_summarize_split_table(item) for item in value[:3] if _is_split_table(item)]
+            elif isinstance(first, dict):
                 summary["item_keys"] = list(first.keys())[:10]
+                summary["sample"] = [_summarize_result_value(item, depth + 1) for item in value[:3]]
             elif len(value) <= 5 and all(isinstance(item, (bool, int, float, str)) or item is None for item in value):
                 summary["items"] = value
             else:
@@ -804,11 +846,52 @@ def _format_result_summary_for_chat(summary: dict[str, Any]) -> str:
     data = summary.get("data")
     if isinstance(data, dict) and data:
         lines.append("Result summary:")
-        for key, value in list(data.items())[:8]:
-            lines.append(f"- {key}: {json.dumps(value, sort_keys=True)[:500]}")
+        preferred_keys = [key for key in ("scores", "metrics", "predictions", "explain") if key in data]
+        remaining_keys = [key for key in data.keys() if key not in preferred_keys]
+        for key in (preferred_keys + remaining_keys)[:8]:
+            value = data[key]
+            lines.extend(_format_result_data_item(str(key), value))
     elif data is not None:
         lines.append(f"Result summary: {json.dumps(data, sort_keys=True)[:500]}")
     return "\n".join(lines) if lines else "The result is available."
+
+
+def _format_result_data_item(name: str, value: Any) -> list[str]:
+    if isinstance(value, dict) and value.get("type") == "table":
+        return _format_table_summary(name, value)
+    if isinstance(value, dict) and value.get("type") == "array" and value.get("tables"):
+        lines = [f"- {name}: {value.get('count')} table payload(s)"]
+        for index, table in enumerate(value.get("tables", []), start=1):
+            lines.extend(_format_table_summary(f"{name} table {index}", table))
+        return lines
+    return [f"- {name}: {json.dumps(value, sort_keys=True)[:1000]}"]
+
+
+def _format_table_summary(name: str, table: dict[str, Any]) -> list[str]:
+    lines = [f"- {name}: {table.get('row_count', 0)} rows x {table.get('column_count', 0)} columns"]
+    raw_rows = table.get("rows")
+    rows = raw_rows if isinstance(raw_rows, list) else []
+    if rows:
+        lines.extend(_format_markdown_table(rows))
+    if table.get("truncated"):
+        lines.append(f"  Showing first {len(rows)} rows and up to {MAX_RESULT_TABLE_COLUMNS} columns.")
+    return lines
+
+
+def _format_markdown_table(rows: list[dict[str, Any]]) -> list[str]:
+    columns: list[str] = []
+    for row in rows:
+        for column in row.keys():
+            if column not in columns:
+                columns.append(column)
+    columns = columns[:MAX_RESULT_TABLE_COLUMNS + 1]
+    if not columns:
+        return []
+    lines = ["  | " + " | ".join(columns) + " |", "  | " + " | ".join(["---"] * len(columns)) + " |"]
+    for row in rows:
+        cells = [str(row.get(column, "")).replace("\n", " ")[:120] for column in columns]
+        lines.append("  | " + " | ".join(cells) + " |")
+    return lines
 
 
 def _take_debug(response: dict[str, Any]) -> dict[str, Any] | None:
@@ -834,6 +917,13 @@ def _remember_job(context: FunctionInvocationContext, job_type: str, request_sum
         "created_at": _now_iso(),
         "dashboard_url": _dashboard_link(str(job_session_id)),
         "polling_started": False,
+        "polling": {
+            "enabled": status not in TERMINAL_JOB_STATUSES,
+            "starts_after_response": True,
+            "interval_seconds": config.futurecomplete_poll_interval_seconds,
+            "max_attempts": config.futurecomplete_poll_max_attempts,
+            "on_success": "fetch /v1/sessions/{session_id}/result and post a concise result summary plus dashboard link back into this chat",
+        },
         "subscription_plan_id": subscription.get("plan_id") if subscription else None,
         "request": request_summary,
         "response": _summarize_api_response(response),
@@ -873,10 +963,44 @@ def _job_capability(job_type: str | None) -> str:
     return "forecast"
 
 
+def _agent_app_id() -> str | None:
+    return os.environ.get("BOT_ID") or os.environ.get("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID")
+
+
+async def _send_job_notification(context: TurnContext, session_id: str, job: dict[str, Any], message: str):
+    errors: list[str] = []
+    reference = _conversation_references.get(session_id)
+    agent_app_id = _agent_app_id()
+    if reference is not None and agent_app_id:
+        try:
+            continuation_activity = Activity(type=ActivityTypes.message)
+            continuation_activity.apply_conversation_reference(reference)
+
+            async def callback(turn_context: TurnContext):
+                await turn_context.send_activity(message)
+
+            await adapter.continue_conversation(agent_app_id, continuation_activity, callback)
+            job["last_notification"] = {"sent_at": _now_iso(), "method": "continue_conversation"}
+            return
+        except Exception as error:
+            errors.append(f"continue_conversation failed: {error}")
+    try:
+        await context.send_activity(message)
+        job["last_notification"] = {"sent_at": _now_iso(), "method": "turn_context"}
+        return
+    except Exception as error:
+        errors.append(f"turn_context failed: {error}")
+    job["last_notify_error"] = "; ".join(errors) or "notification failed"
+    job["updated_at"] = _now_iso()
+
+
 async def _poll_job_and_notify(context: TurnContext, session_id: str, job: dict[str, Any]):
     identity = _session_users.get(session_id, {})
     capability = _job_capability(job.get("type"))
     job_id = str(job["id"])
+    if isinstance(job.get("polling"), dict):
+        job["polling"]["started"] = True
+        job["polling"].setdefault("started_at", _now_iso())
     for _ in range(config.futurecomplete_poll_max_attempts):
         await asyncio.sleep(config.futurecomplete_poll_interval_seconds)
         try:
@@ -908,7 +1032,7 @@ async def _poll_job_and_notify(context: TurnContext, session_id: str, job: dict[
                         job["updated_at"] = _now_iso()
                         message += f"\n\nI could not retrieve the result payload automatically: {error}"
                 message += f"\n\nOpen the dashboard for plots and CSV download: {job['dashboard_url']}"
-                await context.send_activity(message)
+                await _send_job_notification(context, session_id, job, message)
                 return
         except Exception as error:
             job["last_poll_error"] = str(error)
@@ -919,6 +1043,9 @@ def _schedule_job_polling(context: TurnContext, session_id: str, job: dict[str, 
     if job.get("polling_started") or job.get("status") in TERMINAL_JOB_STATUSES:
         return
     job["polling_started"] = True
+    if isinstance(job.get("polling"), dict):
+        job["polling"]["started"] = True
+        job["polling"]["started_at"] = _now_iso()
     task = asyncio.create_task(_poll_job_and_notify(context, session_id, job))
     _polling_tasks.add(task)
     task.add_done_callback(_polling_tasks.discard)
@@ -1203,6 +1330,49 @@ def get_job_status(
 
 
 @tool(approval_mode="never_require")
+def get_job_result(
+    context: FunctionInvocationContext,
+    session_id: Annotated[str | None, Field(description="Optional FutureComplete session ID/job ID. If omitted, fetches results for the most recent remembered job in this conversation.")] = None,
+) -> Annotated[str, Field(description="Fetch and summarize FutureComplete job results by session ID, or the latest remembered job if no session ID is provided.")]:
+    """Fetch the result payload for a completed FutureComplete job."""
+    try:
+        current_session_id = _get_session_id(context)
+        identity = _get_session_identity(context)
+        matching_job = _find_remembered_job(current_session_id, session_id)
+        target_session_id = session_id or (str(matching_job["id"]) if matching_job else None)
+        if not target_session_id:
+            raise ValueError("No FutureComplete job is remembered in this conversation. Ask the user for the FutureComplete session ID from the dashboard URL.")
+
+        capability = _job_capability(matching_job.get("type") if matching_job else "backtest")
+        response = _get_futurecomplete(_job_result_path(target_session_id), identity, current_session_id, capability)
+        debug = _take_debug(response)
+        result_summary = _summarize_result_for_chat(response)
+        chat_summary = _format_result_summary_for_chat(result_summary)
+        if matching_job is not None:
+            matching_job["result_response"] = _summarize_api_response(response)
+            matching_job["result_summary"] = result_summary
+            matching_job["updated_at"] = _now_iso()
+
+        return _json(
+            _add_debug(
+                {
+                    "ok": True,
+                    "session_id": target_session_id,
+                    "dashboard_url": _dashboard_link(target_session_id),
+                    "result_summary": result_summary,
+                    "chat_summary": chat_summary,
+                    "response": _summarize_api_response(response),
+                },
+                debug,
+            )
+        )
+    except FutureCompleteApiError as error:
+        return _json(_futurecomplete_error_payload(error))
+    except Exception as error:
+        return _json({"ok": False, "error": str(error)})
+
+
+@tool(approval_mode="never_require")
 def cancel_job(
     context: FunctionInvocationContext,
     session_id: Annotated[str, Field(description="FutureComplete session ID/job ID to cancel.")],
@@ -1286,6 +1456,7 @@ maf_agent = chat_client.as_agent(
         submit_backtest, 
         submit_benchmark,
         get_job_status,
+        get_job_result,
         cancel_job,
         list_jobs, 
         mcp_server
@@ -1302,6 +1473,7 @@ _sessions: dict[str, AgentSession] = {}
 # touching TurnContext.
 _session_users: dict[str, dict[str, str | None]] = {}
 _session_attachments: dict[str, list[dict[str, Any]]] = {}
+_conversation_references: dict[str, Any] = {}
 _dataset_schemas_by_session: dict[str, dict[str, Any]] = {}
 _jobs_by_session: dict[str, list[dict[str, Any]]] = {}
 _subscriptions_by_user: dict[str, dict[str, Any]] = {}
@@ -1418,6 +1590,7 @@ async def on_message(context: TurnContext, state: TurnState):
         if previous_session is not None:
             _session_users.pop(previous_session.session_id, None)
             _session_attachments.pop(previous_session.session_id, None)
+            _conversation_references.pop(previous_session.session_id, None)
             _dataset_schemas_by_session.pop(previous_session.session_id, None)
             _jobs_by_session.pop(previous_session.session_id, None)
             _session_subscription_keys.pop(previous_session.session_id, None)
@@ -1433,6 +1606,10 @@ async def on_message(context: TurnContext, state: TurnState):
     # "who is calling" by session_id.
     user_identity = _extract_user_identity(context)
     _session_users[session.session_id] = user_identity
+    try:
+        _conversation_references[session.session_id] = context.activity.get_conversation_reference()
+    except Exception as error:
+        print(f"[session {session.session_id}] could not capture conversation reference: {error}", file=sys.stderr)
     captured_attachments = _capture_attachments(context, session.session_id)
     debug_requested = bool(DEBUG_TRIGGER_PATTERN.search(incoming_text))
     if debug_requested:

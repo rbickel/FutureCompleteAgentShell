@@ -47,7 +47,7 @@ Use this flow unless the user asks for something more specific:
 7. Validate the parameter set conversationally.
 8. Summarize the requested job and ask for confirmation.
 9. Use the correct submission tool when the required inputs and subscription state are present.
-10. After submission, tell the user the service will poll for completion and automatically post a concise result summary plus the result link back into the chat. When a confirmed `session_id` or job ID is available, point the user to `https://futurecomplete.inait.ai/jobs/{session_id}`.
+10. After a submission tool returns `ok: true`, always tell the user that host-side polling is enabled for the job, including the polling cadence from the returned `job.polling.interval_seconds` when available. Explain that polling starts immediately after the current response is sent and that, on successful completion, the agent will fetch `/v1/sessions/{session_id}/result` and automatically post a concise result summary plus the dashboard link back into the chat. When a confirmed `session_id` or job ID is available, point the user to `https://futurecomplete.inait.ai/jobs/{session_id}`.
 
 Ask only for missing information. If the user provides several fields at once, carry them forward and avoid re-asking.
 
@@ -126,13 +126,15 @@ When the user asks to see jobs, call `list_jobs`. Show a compact list only if jo
 
 When the user asks whether a job is complete, asks for status, says "is it done yet", or shares a FutureComplete dashboard URL, call `get_job_status`. If the user gives a dashboard URL, extract the session ID from `/jobs/{session_id}` and pass it to `get_job_status`. If they do not provide a session ID, call `get_job_status` without one to check the most recent remembered job in the conversation. Do not say you lack a status-check tool.
 
+When the user asks what the results are, asks to show results, asks for predictions, metrics, artifacts, or output from a completed job, call `get_job_result`. If the user gives a dashboard URL, extract the session ID from `/jobs/{session_id}` and pass it to `get_job_result`. If they do not provide a session ID, call `get_job_result` without one to fetch results for the most recent remembered job in the conversation. Do not answer result requests from status data alone.
+
 When the user asks to stop or cancel a running job, confirm the target session ID if needed, then call `cancel_job`. Do not claim cancellation succeeded unless the tool returns success.
 
 For completed jobs with a confirmed `session_id`, include:
 
 `https://futurecomplete.inait.ai/jobs/{session_id}`
 
-Do not show raw JSON as the primary result experience. Summarize the status and result fields in plain language and direct the user to the dashboard for curated plots and CSV download. Keep result summaries compact; do not paste large arrays or row-level dataset payloads into chat.
+Do not show raw JSON as the primary result experience. Summarize the status and result fields in plain language and direct the user to the dashboard for curated plots and CSV download. When `get_job_result` returns `chat_summary` or table `rows`, render those rows in chat because they are already bounded and safe for display. Do not say row-level metrics are unavailable if the tool returned table rows. Keep result summaries compact; do not paste large arrays or original uploaded dataset payloads into chat.
 
 ## API Response Codes And Errors
 
@@ -173,6 +175,8 @@ When the user confirms a Backtest with the required fields, call `submit_backtes
 When the user confirms a Benchmark with the required fields, call `submit_benchmark`.
 
 When the user asks for job status or whether a job is complete, call `get_job_status`.
+
+When the user asks for job results, predictions, metrics, artifacts, or completed output, call `get_job_result`.
 
 When the user asks for job history, call `list_jobs`.
 

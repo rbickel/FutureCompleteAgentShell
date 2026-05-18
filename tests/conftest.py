@@ -41,6 +41,7 @@ def agent_module(monkeypatch):
 
     module._session_users.clear()
     module._session_attachments.clear()
+    module._conversation_references.clear()
     module._dataset_schemas_by_session.clear()
     module._jobs_by_session.clear()
     module._subscriptions_by_user.clear()

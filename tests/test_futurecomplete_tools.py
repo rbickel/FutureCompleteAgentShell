@@ -127,6 +127,8 @@ def test_submit_backtest_includes_debug_block_from_api_call(agent_module, fake_c
     assert result["ok"] is True
     assert result["debug"]["request"]["method"] == "POST"
     assert "_debug" not in json.dumps(result["job"])
+    assert result["job"]["polling"]["enabled"] is True
+    assert result["job"]["polling"]["starts_after_response"] is True
 
 
 def test_trial_subscription_allows_backtest_and_blocks_forecast_and_benchmark(agent_module, fake_context, active_trial_subscription):
@@ -264,6 +266,9 @@ def test_submit_backtest_posts_public_backtest_payload(agent_module, fake_contex
     assert result["ok"] is True
     assert captured["path"] == "/v1/backtest"
     assert captured["required_capability"] == "backtest"
+    assert result["job"]["polling"]["enabled"] is True
+    assert result["job"]["polling"]["interval_seconds"] == agent_module.config.futurecomplete_poll_interval_seconds
+    assert "/v1/sessions/{session_id}/result" in result["job"]["polling"]["on_success"]
     args = captured["payload"]["config"]["operation_arguments"]
     assert args["operation_type"] == "backtest"
     assert args["prediction_interval_levels"] == "80,95"
@@ -408,6 +413,84 @@ def test_get_job_status_checks_explicit_session_id(agent_module, fake_context, a
     assert captured["required_capability"] == "backtest"
 
 
+def test_get_job_result_fetches_latest_remembered_job(agent_module, fake_context, active_trial_subscription, monkeypatch):
+    agent_module._jobs_by_session[fake_context.session.session_id] = [
+        {
+            "id": "backtest-123",
+            "type": "backtest",
+            "status": "completed",
+            "dashboard_url": "https://futurecomplete.inait.ai/jobs/backtest-123",
+        }
+    ]
+    captured = {}
+
+    def fake_get(path, identity, session_id, required_capability):
+        captured.update(path=path, session_id=session_id, required_capability=required_capability)
+        return {
+            "status": "completed",
+            "response": {
+                "operation_type": "backtest",
+                "session_id": "backtest-123",
+                "resource_id": "result:backtest-123",
+                "data": {
+                    "metrics": {"mae": 1.25, "rmse": 2.5},
+                    "predictions": [{"date": "2016-01-01", "value": 123.45}],
+                },
+            },
+        }
+
+    monkeypatch.setattr(agent_module, "_get_futurecomplete", fake_get)
+
+    result = tool_json(agent_module.get_job_result, fake_context)
+
+    assert result["ok"] is True
+    assert result["session_id"] == "backtest-123"
+    assert result["dashboard_url"] == "https://futurecomplete.inait.ai/jobs/backtest-123"
+    assert result["result_summary"]["data"]["metrics"]["mae"] == 1.25
+    assert result["result_summary"]["data"]["predictions"]["type"] == "array"
+    assert "Result summary:" in result["chat_summary"]
+    assert "mae" in result["chat_summary"]
+    assert captured["path"] == "/v1/sessions/backtest-123/result"
+    assert captured["required_capability"] == "backtest"
+    remembered_job = agent_module._jobs_by_session[fake_context.session.session_id][0]
+    assert remembered_job["result_summary"]["data"]["metrics"]["rmse"] == 2.5
+
+
+def test_get_job_result_fetches_explicit_session_id(agent_module, fake_context, active_trial_subscription, monkeypatch):
+    captured = {}
+
+    def fake_get(path, identity, session_id, required_capability):
+        captured.update(path=path, session_id=session_id, required_capability=required_capability)
+        return {
+            "status": "completed",
+            "response": {
+                "operation_type": "backtest",
+                "session_id": "external-456",
+                "data": {
+                    "scores": {
+                        "index": ["mae", "rmse"],
+                        "columns": ["AAPL", "MSFT"],
+                        "data": [[1.25, 2.5], [3.5, 4.75]],
+                    }
+                },
+            },
+        }
+
+    monkeypatch.setattr(agent_module, "_get_futurecomplete", fake_get)
+
+    result = tool_json(agent_module.get_job_result, fake_context, session_id="external-456")
+
+    assert result["ok"] is True
+    assert result["session_id"] == "external-456"
+    assert result["result_summary"]["data"]["scores"]["type"] == "table"
+    assert result["result_summary"]["data"]["scores"]["rows"][0]["index"] == "mae"
+    assert result["result_summary"]["data"]["scores"]["rows"][0]["AAPL"] == 1.25
+    assert "| index | AAPL | MSFT |" in result["chat_summary"]
+    assert "| mae | 1.25 | 2.5 |" in result["chat_summary"]
+    assert captured["path"] == "/v1/sessions/external-456/result"
+    assert captured["required_capability"] == "backtest"
+
+
 def test_polling_posts_result_summary_when_job_completes(agent_module, fake_context, monkeypatch):
     sent_messages = []
 
@@ -441,6 +524,7 @@ def test_polling_posts_result_summary_when_job_completes(agent_module, fake_cont
         "type": "backtest",
         "status": "running",
         "dashboard_url": "https://futurecomplete.inait.ai/jobs/backtest-123",
+        "polling": {},
     }
 
     asyncio.run(agent_module._poll_job_and_notify(FakeTurnContext(), fake_context.session.session_id, job))
@@ -451,6 +535,8 @@ def test_polling_posts_result_summary_when_job_completes(agent_module, fake_cont
     assert "mae" in sent_messages[0]
     assert "predictions" in sent_messages[0]
     assert "Open the dashboard" in sent_messages[0]
+    assert job["polling"]["started"] is True
+    assert "started_at" in job["polling"]
     assert job["result_summary"]["data"]["metrics"]["mae"] == 1.25
     assert job["result_summary"]["data"]["predictions"]["type"] == "array"
 

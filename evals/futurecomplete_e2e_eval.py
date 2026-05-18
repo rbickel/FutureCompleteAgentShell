@@ -128,8 +128,38 @@ def _install_mock_backend(agent_module, calls: list[dict[str, Any]]):
         cancelled_session = path.split("/sessions/", 1)[1].split("/", 1)[0]
         return {"status": "success", "message": "Cancellation requested", "session_id": cancelled_session}
 
+    def fake_get(path, identity, session_id, required_capability):
+        calls.append(
+            {
+                "method": "GET",
+                "path": path,
+                "session_id": session_id,
+                "required_capability": required_capability,
+            }
+        )
+        requested_session = path.split("/sessions/", 1)[1].split("/", 1)[0]
+        if path.endswith("/status"):
+            return {"status": "completed", "response": {"operation_type": required_capability, "session_id": requested_session}}
+        if path.endswith("/result"):
+            return {
+                "status": "completed",
+                "response": {
+                    "operation_type": required_capability,
+                    "session_id": requested_session,
+                    "resource_id": f"response:{requested_session}",
+                    "dataset_resource_id": f"data:{requested_session}",
+                    "data": {
+                        "predictions": [{"index": [0], "columns": ["AAPL"], "data": [[123.45]]}],
+                        "scores": {"index": ["mae"], "columns": ["value"], "data": [[1.25]]},
+                        "explain": None,
+                    },
+                },
+            }
+        raise EvalFailure(f"unexpected GET path: {path}")
+
     agent_module._post_futurecomplete = fake_post
     agent_module._post_futurecomplete_without_body = fake_cancel
+    agent_module._get_futurecomplete = fake_get
 
 
 def _assert(condition: bool, message: str):
@@ -281,6 +311,44 @@ def eval_cancel_running_job_flow(agent_module, dataset_path: Path) -> EvalResult
     return EvalResult(name="cancel_running_job_flow", passed=True, details={"job_id": job_id, "cancel_path": calls[-1]["path"]})
 
 
+def eval_result_retrieval_flow(agent_module, dataset_path: Path) -> EvalResult:
+    calls: list[dict[str, Any]] = []
+    _reset_agent_state(agent_module)
+    _install_mock_trial(agent_module)
+    _install_mock_backend(agent_module, calls)
+    context = _fake_context(agent_module)
+    _tool_json(agent_module.get_trial_subscription, context, accepted_trial_limitations=True)
+    submitted = _tool_json(
+        agent_module.submit_backtest,
+        context,
+        target_columns="AAPL",
+        horizon=4,
+        prediction_stride=4,
+        prediction_intervals="0.8,0.95",
+        feature_columns="MSFT",
+        backtest_size=20,
+        dataset_reference=str(dataset_path),
+    )
+    job_id = submitted["job"]["id"]
+
+    result = _tool_json(agent_module.get_job_result, context, session_id=job_id)
+    _assert(result["ok"], "result retrieval failed")
+    _assert(calls[-1]["path"] == f"/v1/sessions/{job_id}/result", "result endpoint mismatch")
+    _assert("predictions" in result["result_summary"]["data"], "predictions missing from result summary")
+    _assert("scores" in result["result_summary"]["data"], "scores missing from result summary")
+    _assert("Result summary:" in result["chat_summary"], "chat summary missing result section")
+
+    return EvalResult(
+        name="result_retrieval_flow",
+        passed=True,
+        details={
+            "job_id": job_id,
+            "result_path": calls[-1]["path"],
+            "result_data_keys": list(result["result_summary"]["data"].keys()),
+        },
+    )
+
+
 def eval_live_api_health(base_url: str) -> EvalResult:
     status, body, _headers = _live_request("GET", f"{base_url.rstrip('/')}/health")
     _assert(status in {200, 401, 403}, f"expected /health to return 200, 401, or 403, got {status}: {body}")
@@ -333,6 +401,7 @@ def run_offline_evals(dataset_path: Path = DEFAULT_SAMPLE_DATASET) -> list[EvalR
         eval_trial_backtest_flow,
         eval_full_license_forecast_and_benchmark_flow,
         eval_cancel_running_job_flow,
+        eval_result_retrieval_flow,
     ]
     results: list[EvalResult] = []
     for scenario in scenarios:
