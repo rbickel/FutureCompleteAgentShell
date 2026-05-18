@@ -61,6 +61,7 @@ def test_forecast_payload_matches_public_openapi_schema(agent_module, sample_dat
     assert payload["config"]["operation_arguments"]["forecasting_horizon"] == 5
     assert payload["config"]["operation_arguments"]["targets"] == "AAPL,MSFT"
     assert payload["config"]["operation_arguments"]["features"] == "AAPL__hl,MSFT__hl"
+    assert payload["config"]["operation_arguments"]["prediction_interval_levels"] == "80,95"
     assert summary["data_format"] == "pandas_split"
     assert summary["data_columns"] == data["columns"]
     assert "AAPL" in summary["data_columns"]
@@ -83,6 +84,7 @@ def test_backtest_payload_matches_public_openapi_schema(agent_module, sample_dat
 
     assert payload["config"]["operation"] == "backtest"
     assert payload["config"]["operation_arguments"]["operation_type"] == "backtest"
+    assert payload["config"]["operation_arguments"]["prediction_interval_levels"] == "80,95"
     assert payload["config"]["operation_arguments"]["prediction_stride"] == 4
     assert payload["config"]["operation_arguments"]["backtest_size"] == 20
     assert "start_date" not in payload["config"]["operation_arguments"]
@@ -111,6 +113,12 @@ def test_benchmark_payload_nests_backtest_config(agent_module, sample_dataset_pa
     assert payload["config"]["operation_arguments"]["operation_type"] == "benchmark"
     assert payload["config"]["operation_arguments"]["backtest_config"]["operation_type"] == "backtest"
     assert payload["background"] is True
+
+
+def test_prediction_interval_normalization(agent_module):
+    assert agent_module._normalize_prediction_intervals("0.8,0.95") == "80,95"
+    assert agent_module._normalize_prediction_intervals("50,90") == "50,90"
+    assert agent_module._normalize_prediction_intervals("80, 95") == "80,95"
 
 
 def test_response_summaries_do_not_expose_inline_result_data(agent_module):

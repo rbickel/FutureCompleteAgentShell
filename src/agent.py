@@ -449,6 +449,25 @@ def _normalize_list(value: Any) -> list[str]:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
+def _normalize_prediction_intervals(value: str | None) -> str | None:
+    if value is None:
+        return None
+    intervals: list[str] = []
+    for item in str(value).split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            numeric = float(item)
+        except ValueError:
+            intervals.append(item)
+            continue
+        if 0 < numeric <= 1:
+            numeric *= 100
+        intervals.append(str(int(numeric)) if numeric.is_integer() else str(numeric))
+    return ",".join(intervals) if intervals else None
+
+
 def _find_attachment(session_id: str | None, file_reference: str | None) -> dict[str, Any] | None:
     if not session_id:
         return None
@@ -633,7 +652,7 @@ def _operation_arguments(
         "forecasting_horizon": horizon,
         "targets": target_columns,
         "features": feature_columns,
-        "prediction_interval_levels": prediction_intervals,
+        "prediction_interval_levels": _normalize_prediction_intervals(prediction_intervals),
         "prediction_stride": prediction_stride,
         "end_date": end_date,
         "run_explain": run_explain,

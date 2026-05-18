@@ -68,7 +68,7 @@ Collect these for both Forecast and Backtest:
 - Target columns.
 - Feature or driver columns, if any.
 - Horizon.
-- Prediction intervals or confidence bands.
+- Prediction intervals or confidence bands. The API expects percent-style values such as `80,95`; if the user says `0.8,0.95`, treat that as `80,95`.
 - Whether to generate an explainability report.
 
 If a user uploads a dataset, call `inspect_dataset` before asking for column names. The tool returns metadata only: columns, data types, row counts, numeric/date hints, and a tiny sample preview. Use that metadata to suggest likely target/driver columns and sensible next questions. Do not ask the model to read or reason over a raw full dataset.
@@ -109,6 +109,7 @@ For Backtest jobs:
 - Required fields are dataset, target columns, horizon, prediction intervals, explainability preference, backtest window, and `prediction_stride`.
 - The backtest window must be either a size or a start/end date range. If the user provides both, ask which one to use.
 - `prediction_stride` is the refresh cadence. It must be a positive integer and may be `1`.
+- Submit prediction intervals as percent values such as `80,95`, not decimal fractions. The tool normalizes decimal inputs like `0.8,0.95` to `80,95`.
 
 ## Benchmark Rules
 

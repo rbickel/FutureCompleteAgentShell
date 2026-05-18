@@ -265,6 +265,7 @@ def test_submit_backtest_posts_public_backtest_payload(agent_module, fake_contex
     assert captured["required_capability"] == "backtest"
     args = captured["payload"]["config"]["operation_arguments"]
     assert args["operation_type"] == "backtest"
+    assert args["prediction_interval_levels"] == "80,95"
     assert args["prediction_stride"] == 4
     assert args["backtest_size"] == 20
 
@@ -293,6 +294,7 @@ def test_submit_backtest_allows_stride_one_and_validates_window(agent_module, fa
     )
     assert stride_result["ok"] is True
     assert captured["payload"]["config"]["operation_arguments"]["prediction_stride"] == 1
+    assert captured["payload"]["config"]["operation_arguments"]["prediction_interval_levels"] == "80,95"
 
     window_result = tool_json(
         agent_module.submit_backtest,
