@@ -34,6 +34,7 @@ def test_configure_telemetry_enables_agent_framework_observability(repo_root, mo
     monkeypatch.setenv("APPLICATIONINSIGHTS_ROLE_NAME", "FutureCompleteAgentShell-test")
     monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
     monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
 
     assert telemetry.configure_telemetry() is True
 
@@ -45,6 +46,7 @@ def test_configure_telemetry_enables_agent_framework_observability(repo_root, mo
     assert calls[2] == ("enable_instrumentation", {"enable_sensitive_data": True})
     assert telemetry.os.environ["ENABLE_INSTRUMENTATION"] == "true"
     assert telemetry.os.environ["OTEL_SERVICE_NAME"] == "FutureCompleteAgentShell-test"
+    assert telemetry.os.environ["OTEL_RESOURCE_ATTRIBUTES"] == "service.name=FutureCompleteAgentShell-test"
 
 
 def test_conversation_trace_id_is_deterministic(repo_root):
@@ -56,6 +58,29 @@ def test_conversation_trace_id_is_deterministic(repo_root):
     assert first == second
     assert first != other
     assert first > 0
+
+
+def test_conversation_trace_id_without_conversation_is_unique(repo_root):
+    telemetry = _import_telemetry(repo_root)
+    first = telemetry.conversation_trace_id(None)
+    second = telemetry.conversation_trace_id(None)
+
+    assert first != second
+    assert first > 0
+    assert second > 0
+
+
+def test_service_resource_attributes_preserve_existing_values(repo_root, monkeypatch):
+    telemetry = _import_telemetry(repo_root)
+    monkeypatch.delenv("APPLICATIONINSIGHTS_ROLE_NAME", raising=False)
+    monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=playground")
+
+    telemetry._ensure_service_resource_attributes("FutureCompleteAgentShell-playground")
+
+    assert telemetry.os.environ["APPLICATIONINSIGHTS_ROLE_NAME"] == "FutureCompleteAgentShell-playground"
+    assert telemetry.os.environ["OTEL_SERVICE_NAME"] == "FutureCompleteAgentShell-playground"
+    assert telemetry.os.environ["OTEL_RESOURCE_ATTRIBUTES"] == "deployment.environment=playground,service.name=FutureCompleteAgentShell-playground"
 
 
 def test_log_conversation_event_adds_correlation_dimensions(repo_root, caplog):

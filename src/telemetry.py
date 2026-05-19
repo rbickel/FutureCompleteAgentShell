@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 from contextlib import contextmanager
 from urllib.parse import urlparse
 from typing import Any, Iterator
@@ -35,6 +36,11 @@ except Exception:  # pragma: no cover - optional dependency in local tests
     TraceFlags = None
     set_span_in_context = None
 
+try:
+    from opentelemetry.sdk.resources import Resource
+except Exception:  # pragma: no cover - optional dependency in local tests
+    Resource = None
+
 
 _TELEMETRY_ENABLED = False
 _tracer = trace.get_tracer(LOGGER_NAME) if trace is not None else None
@@ -52,14 +58,17 @@ def configure_telemetry() -> bool:
         return False
     os.environ.setdefault("AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING", "true")
     os.environ.setdefault("ENABLE_INSTRUMENTATION", "true")
-    os.environ.setdefault("OTEL_SERVICE_NAME", os.environ.get("APPLICATIONINSIGHTS_ROLE_NAME") or "FutureCompleteAgentShell")
+    service_name = os.environ.get("APPLICATIONINSIGHTS_ROLE_NAME") or os.environ.get("OTEL_SERVICE_NAME") or "FutureCompleteAgentShell"
+    _ensure_service_resource_attributes(service_name)
     options: dict[str, Any] = {
         "connection_string": connection_string,
         "logger_name": LOGGER_NAME,
         "enable_live_metrics": True,
     }
     if create_resource is not None:
-        options["resource"] = create_resource(service_name=os.environ["OTEL_SERVICE_NAME"])
+        options["resource"] = create_resource(service_name=service_name)
+    elif Resource is not None:
+        options["resource"] = Resource.create({"service.name": service_name})
     configure_azure_monitor(**options)
     if enable_instrumentation is not None:
         enable_instrumentation(enable_sensitive_data=_env_flag("ENABLE_SENSITIVE_DATA"))
@@ -75,11 +84,26 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _ensure_service_resource_attributes(service_name: str):
+    os.environ.setdefault("APPLICATIONINSIGHTS_ROLE_NAME", service_name)
+    os.environ.setdefault("OTEL_SERVICE_NAME", service_name)
+    resource_attributes = os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "").strip()
+    if "service.name=" in resource_attributes:
+        return
+    service_attribute = f"service.name={service_name}"
+    os.environ["OTEL_RESOURCE_ATTRIBUTES"] = f"{resource_attributes},{service_attribute}" if resource_attributes else service_attribute
+
+
 def conversation_trace_id(conversation_id: str | None) -> int:
-    source = conversation_id or "unknown-conversation"
-    digest = hashlib.sha256(source.encode("utf-8")).digest()[:16]
+    if not conversation_id:
+        return _new_trace_id()
+    digest = hashlib.sha256(conversation_id.encode("utf-8")).digest()[:16]
     trace_id = int.from_bytes(digest, byteorder="big")
     return trace_id or 1
+
+
+def _new_trace_id() -> int:
+    return secrets.randbits(128) or 1
 
 
 @contextmanager
