@@ -154,6 +154,18 @@ resource webApp 'Microsoft.Web/sites@2021-02-01' = {
           value: webAppName
         }
         {
+          name: 'OTEL_SERVICE_NAME'
+          value: webAppName
+        }
+        {
+          name: 'ENABLE_INSTRUMENTATION'
+          value: 'true'
+        }
+        {
+          name: 'ENABLE_SENSITIVE_DATA'
+          value: 'false'
+        }
+        {
           name: 'BOT_TENANT_ID'
           value: identity.properties.tenantId
         }

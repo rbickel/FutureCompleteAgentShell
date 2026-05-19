@@ -68,6 +68,16 @@ During an interactive conversation, type `debug` at any point to enable debug mo
 
 Azure deployments provision a workspace-based Application Insights resource and set `APPLICATIONINSIGHTS_CONNECTION_STRING` on the App Service. Local and playground runs can opt in by setting the same environment variable before starting the agent.
 
+When Application Insights is configured, the agent also enables Microsoft Agent Framework OpenTelemetry instrumentation. This emits GenAI semantic-convention spans for the Application Insights Agents view, including `invoke_agent FutureCompleteAgent`, `chat <model>`, and `execute_tool <tool>` spans. The agent uses the stable OpenTelemetry agent ID `futurecomplete-agent` and name `FutureCompleteAgent`.
+
+Relevant telemetry environment variables:
+
+- `APPLICATIONINSIGHTS_CONNECTION_STRING`: exports telemetry to Application Insights.
+- `APPLICATIONINSIGHTS_ROLE_NAME`: sets the App Insights cloud role name used by custom telemetry.
+- `OTEL_SERVICE_NAME`: sets the OpenTelemetry service name; defaults to the role name.
+- `ENABLE_INSTRUMENTATION`: enables Microsoft Agent Framework instrumentation; defaults to `true` when App Insights is configured.
+- `ENABLE_SENSITIVE_DATA`: controls whether prompts, responses, tool arguments, and tool results are included in GenAI spans. Keep this `false` in production unless the data policy explicitly allows it.
+
 The agent traces each conversation turn with these custom dimensions:
 
 - `correlation_id`: the Microsoft 365 conversation ID.
@@ -77,6 +87,19 @@ The agent traces each conversation turn with these custom dimensions:
 - `direction`: `inbound`, `outbound`, or `internal`.
 
 Outbound FutureComplete HTTP calls and the MAF-backed Azure OpenAI call are emitted as OpenTelemetry client spans so they appear in the Application Insights `dependencies` table and Transaction details. FutureComplete dependencies use type `HTTP`; LLM dependencies use type `GenAI | azure_openai` when Azure Monitor GenAI tracing is enabled.
+
+Use this KQL in Application Insights Logs to verify that agent-view telemetry is flowing:
+
+```kusto
+dependencies
+| where timestamp > ago(30m)
+| where name startswith "invoke_agent"
+	or name startswith "chat"
+	or name startswith "execute_tool"
+	or customDimensions["gen_ai.operation.name"] in ("invoke_agent", "chat", "execute_tool")
+| project timestamp, name, type, target, operation_Id, customDimensions
+| order by timestamp desc
+```
 
 Use this KQL in Application Insights Logs to review one conversation:
 

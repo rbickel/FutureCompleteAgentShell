@@ -17,6 +17,12 @@ except Exception:  # pragma: no cover - optional dependency in local tests
     configure_azure_monitor = None
 
 try:
+    from agent_framework.observability import create_resource, enable_instrumentation
+except Exception:  # pragma: no cover - optional dependency in local tests
+    create_resource = None
+    enable_instrumentation = None
+
+try:
     from opentelemetry import trace
     from opentelemetry.trace import NonRecordingSpan, SpanContext, SpanKind, Status, StatusCode, TraceFlags, set_span_in_context
 except Exception:  # pragma: no cover - optional dependency in local tests
@@ -45,14 +51,28 @@ def configure_telemetry() -> bool:
         logger.warning("APPLICATIONINSIGHTS_CONNECTION_STRING is set, but azure-monitor-opentelemetry is not installed.")
         return False
     os.environ.setdefault("AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING", "true")
-    configure_azure_monitor(
-        connection_string=connection_string,
-        logger_name=LOGGER_NAME,
-    )
+    os.environ.setdefault("ENABLE_INSTRUMENTATION", "true")
+    os.environ.setdefault("OTEL_SERVICE_NAME", os.environ.get("APPLICATIONINSIGHTS_ROLE_NAME") or "FutureCompleteAgentShell")
+    options: dict[str, Any] = {
+        "connection_string": connection_string,
+        "logger_name": LOGGER_NAME,
+        "enable_live_metrics": True,
+    }
+    if create_resource is not None:
+        options["resource"] = create_resource(service_name=os.environ["OTEL_SERVICE_NAME"])
+    configure_azure_monitor(**options)
+    if enable_instrumentation is not None:
+        enable_instrumentation(enable_sensitive_data=_env_flag("ENABLE_SENSITIVE_DATA"))
+    else:
+        logger.warning("Agent Framework observability is not installed; agent spans will not be emitted.")
     _TELEMETRY_ENABLED = True
     if trace is not None:
         _tracer = trace.get_tracer(LOGGER_NAME)
     return True
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def conversation_trace_id(conversation_id: str | None) -> int:

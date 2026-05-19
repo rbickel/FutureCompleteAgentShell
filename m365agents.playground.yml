@@ -34,3 +34,6 @@ deploy:
         FUTURECOMPLETE_JOB_CANCEL_PATH_TEMPLATE: /v1/sessions/{session_id}/cancel
         APPLICATIONINSIGHTS_CONNECTION_STRING: ${{APPLICATIONINSIGHTS_CONNECTION_STRING}}
         APPLICATIONINSIGHTS_ROLE_NAME: FutureCompleteAgentShell-playground
+        OTEL_SERVICE_NAME: FutureCompleteAgentShell-playground
+        ENABLE_INSTRUMENTATION: "true"
+        ENABLE_SENSITIVE_DATA: "false"

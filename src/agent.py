@@ -1596,6 +1596,7 @@ chat_client = OpenAIChatClient(
 )
 
 maf_agent = chat_client.as_agent(
+    id="futurecomplete-agent",
     name="FutureCompleteAgent",
     instructions=system_prompt,
     tools=[
