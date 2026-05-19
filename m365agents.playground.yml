@@ -32,3 +32,5 @@ deploy:
         FUTURECOMPLETE_JOB_STATUS_PATH_TEMPLATE: /v1/sessions/{session_id}/status
         FUTURECOMPLETE_JOB_RESULT_PATH_TEMPLATE: /v1/sessions/{session_id}/result
         FUTURECOMPLETE_JOB_CANCEL_PATH_TEMPLATE: /v1/sessions/{session_id}/cancel
+        APPLICATIONINSIGHTS_CONNECTION_STRING: ${{APPLICATIONINSIGHTS_CONNECTION_STRING}}
+        APPLICATIONINSIGHTS_ROLE_NAME: FutureCompleteAgentShell-playground

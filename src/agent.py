@@ -39,6 +39,7 @@ from agent_framework import (
 from agent_framework.openai import OpenAIChatClient
 
 from config import Config
+from telemetry import configure_telemetry, conversation_span, dependency_span, http_dependency_attributes, log_conversation_event, set_http_span_result
 
 MAX_DATASET_BYTES = 200 * 1024 * 1024
 MAX_SAMPLE_ROWS = 5
@@ -69,6 +70,7 @@ class FutureCompleteApiError(RuntimeError):
         return parsed if isinstance(parsed, dict) else {"detail": str(parsed)}
 
 load_dotenv()
+configure_telemetry()
 
 # Load configuration
 config = Config(os.environ)
@@ -293,33 +295,46 @@ def _create_trial_subscription(identity: dict[str, str | None], user_email: str 
         headers=request_headers,
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw_body = response.read().decode("utf-8")
-            body = json.loads(raw_body) if raw_body else {}
-            debug = None
-            if _debug_enabled(session_id):
-                debug = _debug_exchange(
-                    "POST",
-                    config.futurecomplete_trial_users_url,
-                    request_headers,
-                    request_body,
-                    response.status,
-                    dict(response.headers.items()),
-                    body,
-                )
-    except urllib.error.HTTPError as error:
-        raise _futurecomplete_api_error(
-            "FutureComplete trial license request",
-            error,
+    conversation_id = _conversation_id_from_session(session_id)
+    with dependency_span(
+        _http_dependency_name("POST", config.futurecomplete_trial_users_url),
+        conversation_id,
+        session_id,
+        http_dependency_attributes(
             "POST",
             config.futurecomplete_trial_users_url,
-            request_headers,
-            request_body,
-            include_debug=_debug_enabled(session_id),
-        ) from error
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"FutureComplete trial license request failed: {error}") from error
+            {"futurecomplete.operation": "trial_subscription", "futurecomplete.plan_id": config.futurecomplete_trial_plan_id},
+        ),
+    ) as span:
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                set_http_span_result(span, response.status)
+                raw_body = response.read().decode("utf-8")
+                body = json.loads(raw_body) if raw_body else {}
+                debug = None
+                if _debug_enabled(session_id):
+                    debug = _debug_exchange(
+                        "POST",
+                        config.futurecomplete_trial_users_url,
+                        request_headers,
+                        request_body,
+                        response.status,
+                        dict(response.headers.items()),
+                        body,
+                    )
+        except urllib.error.HTTPError as error:
+            set_http_span_result(span, error.code)
+            raise _futurecomplete_api_error(
+                "FutureComplete trial license request",
+                error,
+                "POST",
+                config.futurecomplete_trial_users_url,
+                request_headers,
+                request_body,
+                include_debug=_debug_enabled(session_id),
+            ) from error
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"FutureComplete trial license request failed: {error}") from error
 
     subscription_key = _extract_subscription_key(body)
     if not subscription_key:
@@ -354,95 +369,201 @@ def _futurecomplete_headers(identity: dict[str, str | None], session_id: str | N
     }
 
 
+def _conversation_id_from_session(session_id: str | None) -> str | None:
+    if not session_id:
+        return None
+    if ":" not in session_id:
+        return session_id
+    return session_id.rsplit(":", 1)[0]
+
+
+def _http_dependency_name(method: str, url: str) -> str:
+    parsed = urlparse(url)
+    target = parsed.netloc or parsed.hostname or "unknown-target"
+    return f"{method} {target}{parsed.path or '/'}"
+
+
 def _post_futurecomplete(path: str, payload: dict[str, Any], identity: dict[str, str | None], session_id: str | None, required_capability: str) -> dict[str, Any]:
     url = f"{config.futurecomplete_api_base_url.rstrip('/')}{path}"
     headers = _futurecomplete_headers(identity, session_id, required_capability)
+    conversation_id = _conversation_id_from_session(session_id)
+    log_conversation_event(
+        "futurecomplete.api.request",
+        conversation_id,
+        session_id,
+        direction="outbound",
+        attributes={"method": "POST", "path": path, "required_capability": required_capability},
+    )
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
         headers=headers,
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            raw_body = response.read().decode("utf-8")
-            parsed_body = _parse_json_or_text(raw_body)
-            body = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
-            location = response.headers.get("Location")
-            if location:
-                body["location"] = location
-            if _debug_enabled(session_id):
-                body["_debug"] = _debug_exchange(
-                    "POST",
-                    url,
-                    headers,
-                    payload,
-                    response.status,
-                    dict(response.headers.items()),
-                    parsed_body,
+    with dependency_span(
+        _http_dependency_name("POST", url),
+        conversation_id,
+        session_id,
+        http_dependency_attributes("POST", url, {"futurecomplete.path": path, "futurecomplete.capability": required_capability}),
+    ) as span:
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                set_http_span_result(span, response.status)
+                raw_body = response.read().decode("utf-8")
+                parsed_body = _parse_json_or_text(raw_body)
+                body = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
+                location = response.headers.get("Location")
+                if location:
+                    body["location"] = location
+                    if span is not None:
+                        span.set_attribute("http.response.header.location", location)
+                if _debug_enabled(session_id):
+                    body["_debug"] = _debug_exchange(
+                        "POST",
+                        url,
+                        headers,
+                        payload,
+                        response.status,
+                        dict(response.headers.items()),
+                        parsed_body,
+                    )
+                log_conversation_event(
+                    "futurecomplete.api.response",
+                    conversation_id,
+                    session_id,
+                    direction="inbound",
+                    attributes={"method": "POST", "path": path, "http_status": response.status, "required_capability": required_capability},
                 )
-            return body
-    except urllib.error.HTTPError as error:
-        raise _futurecomplete_api_error("FutureComplete API", error, "POST", url, headers, payload, include_debug=_debug_enabled(session_id)) from error
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"FutureComplete API request failed: {error}") from error
+                return body
+        except urllib.error.HTTPError as error:
+            set_http_span_result(span, error.code)
+            log_conversation_event(
+                "futurecomplete.api.error",
+                conversation_id,
+                session_id,
+                direction="inbound",
+                attributes={"method": "POST", "path": path, "http_status": error.code, "required_capability": required_capability},
+            )
+            raise _futurecomplete_api_error("FutureComplete API", error, "POST", url, headers, payload, include_debug=_debug_enabled(session_id)) from error
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"FutureComplete API request failed: {error}") from error
 
 
 def _post_futurecomplete_without_body(path: str, identity: dict[str, str | None], session_id: str | None, required_capability: str) -> dict[str, Any]:
     url = f"{config.futurecomplete_api_base_url.rstrip('/')}{path}"
     headers = _futurecomplete_headers(identity, session_id, required_capability)
+    conversation_id = _conversation_id_from_session(session_id)
+    log_conversation_event(
+        "futurecomplete.api.request",
+        conversation_id,
+        session_id,
+        direction="outbound",
+        attributes={"method": "POST", "path": path, "required_capability": required_capability},
+    )
     headers.pop("Content-Type", None)
     request = urllib.request.Request(url, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw_body = response.read().decode("utf-8")
-            parsed_body = _parse_json_or_text(raw_body)
-            body = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
-            if _debug_enabled(session_id):
-                body["_debug"] = _debug_exchange(
-                    "POST",
-                    url,
-                    headers,
-                    None,
-                    response.status,
-                    dict(response.headers.items()),
-                    parsed_body,
+    with dependency_span(
+        _http_dependency_name("POST", url),
+        conversation_id,
+        session_id,
+        http_dependency_attributes("POST", url, {"futurecomplete.path": path, "futurecomplete.capability": required_capability}),
+    ) as span:
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                set_http_span_result(span, response.status)
+                raw_body = response.read().decode("utf-8")
+                parsed_body = _parse_json_or_text(raw_body)
+                body = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
+                if _debug_enabled(session_id):
+                    body["_debug"] = _debug_exchange(
+                        "POST",
+                        url,
+                        headers,
+                        None,
+                        response.status,
+                        dict(response.headers.items()),
+                        parsed_body,
+                    )
+                log_conversation_event(
+                    "futurecomplete.api.response",
+                    conversation_id,
+                    session_id,
+                    direction="inbound",
+                    attributes={"method": "POST", "path": path, "http_status": response.status, "required_capability": required_capability},
                 )
-            return body
-    except urllib.error.HTTPError as error:
-        raise _futurecomplete_api_error("FutureComplete API", error, "POST", url, headers, None, include_debug=_debug_enabled(session_id)) from error
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"FutureComplete API request failed: {error}") from error
+                return body
+        except urllib.error.HTTPError as error:
+            set_http_span_result(span, error.code)
+            log_conversation_event(
+                "futurecomplete.api.error",
+                conversation_id,
+                session_id,
+                direction="inbound",
+                attributes={"method": "POST", "path": path, "http_status": error.code, "required_capability": required_capability},
+            )
+            raise _futurecomplete_api_error("FutureComplete API", error, "POST", url, headers, None, include_debug=_debug_enabled(session_id)) from error
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"FutureComplete API request failed: {error}") from error
 
 
 def _get_futurecomplete(path: str, identity: dict[str, str | None], session_id: str | None, required_capability: str) -> dict[str, Any]:
     url = f"{config.futurecomplete_api_base_url.rstrip('/')}{path}"
     headers = _futurecomplete_headers(identity, session_id, required_capability)
+    conversation_id = _conversation_id_from_session(session_id)
+    log_conversation_event(
+        "futurecomplete.api.request",
+        conversation_id,
+        session_id,
+        direction="outbound",
+        attributes={"method": "GET", "path": path, "required_capability": required_capability},
+    )
     request = urllib.request.Request(
         url,
         headers=headers,
         method="GET",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw_body = response.read().decode("utf-8")
-            parsed_body = _parse_json_or_text(raw_body)
-            body = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
-            if _debug_enabled(session_id):
-                body["_debug"] = _debug_exchange(
-                    "GET",
-                    url,
-                    headers,
-                    None,
-                    response.status,
-                    dict(response.headers.items()),
-                    parsed_body,
+    with dependency_span(
+        _http_dependency_name("GET", url),
+        conversation_id,
+        session_id,
+        http_dependency_attributes("GET", url, {"futurecomplete.path": path, "futurecomplete.capability": required_capability}),
+    ) as span:
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                set_http_span_result(span, response.status)
+                raw_body = response.read().decode("utf-8")
+                parsed_body = _parse_json_or_text(raw_body)
+                body = parsed_body if isinstance(parsed_body, dict) else {"body": parsed_body}
+                if _debug_enabled(session_id):
+                    body["_debug"] = _debug_exchange(
+                        "GET",
+                        url,
+                        headers,
+                        None,
+                        response.status,
+                        dict(response.headers.items()),
+                        parsed_body,
+                    )
+                log_conversation_event(
+                    "futurecomplete.api.response",
+                    conversation_id,
+                    session_id,
+                    direction="inbound",
+                    attributes={"method": "GET", "path": path, "http_status": response.status, "required_capability": required_capability},
                 )
-            return body
-    except urllib.error.HTTPError as error:
-        raise _futurecomplete_api_error("FutureComplete status API", error, "GET", url, headers, None, include_debug=_debug_enabled(session_id)) from error
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"FutureComplete status request failed: {error}") from error
+                return body
+        except urllib.error.HTTPError as error:
+            set_http_span_result(span, error.code)
+            log_conversation_event(
+                "futurecomplete.api.error",
+                conversation_id,
+                session_id,
+                direction="inbound",
+                attributes={"method": "GET", "path": path, "http_status": error.code, "required_capability": required_capability},
+            )
+            raise _futurecomplete_api_error("FutureComplete status API", error, "GET", url, headers, None, include_debug=_debug_enabled(session_id)) from error
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"FutureComplete status request failed: {error}") from error
 
 
 def _normalize_list(value: Any) -> list[str]:
@@ -969,6 +1090,15 @@ def _agent_app_id() -> str | None:
 
 async def _send_job_notification(context: TurnContext, session_id: str, job: dict[str, Any], message: str):
     errors: list[str] = []
+    conversation_id = job.get("conversation_id") or session_id
+    log_conversation_event(
+        "conversation.proactive_notification.prepare",
+        str(conversation_id),
+        session_id,
+        direction="outbound",
+        text=message,
+        attributes={"job_id": job.get("id"), "job_type": job.get("type"), "status": job.get("status")},
+    )
     reference = _conversation_references.get(session_id)
     agent_app_id = _agent_app_id()
     if reference is not None and agent_app_id:
@@ -981,17 +1111,38 @@ async def _send_job_notification(context: TurnContext, session_id: str, job: dic
 
             await adapter.continue_conversation(agent_app_id, continuation_activity, callback)
             job["last_notification"] = {"sent_at": _now_iso(), "method": "continue_conversation"}
+            log_conversation_event(
+                "conversation.proactive_notification.sent",
+                str(conversation_id),
+                session_id,
+                direction="outbound",
+                attributes={"job_id": job.get("id"), "method": "continue_conversation"},
+            )
             return
         except Exception as error:
             errors.append(f"continue_conversation failed: {error}")
     try:
         await context.send_activity(message)
         job["last_notification"] = {"sent_at": _now_iso(), "method": "turn_context"}
+        log_conversation_event(
+            "conversation.proactive_notification.sent",
+            str(conversation_id),
+            session_id,
+            direction="outbound",
+            attributes={"job_id": job.get("id"), "method": "turn_context"},
+        )
         return
     except Exception as error:
         errors.append(f"turn_context failed: {error}")
     job["last_notify_error"] = "; ".join(errors) or "notification failed"
     job["updated_at"] = _now_iso()
+    log_conversation_event(
+        "conversation.proactive_notification.failed",
+        str(conversation_id),
+        session_id,
+        direction="outbound",
+        attributes={"job_id": job.get("id"), "errors": errors},
+    )
 
 
 async def _poll_job_and_notify(context: TurnContext, session_id: str, job: dict[str, Any]):
@@ -1627,17 +1778,81 @@ async def on_message(context: TurnContext, state: TurnState):
                 "the tool. Debug output must not include uploaded dataset contents or subscription keys."
             )
 
-    before_job_ids = {job["id"] for job in _jobs_by_session.get(session.session_id, [])}
-    response = await maf_agent.run(agent_input, session=session)
-    for job in _jobs_by_session.get(session.session_id, []):
-        if job["id"] not in before_job_ids:
-            _schedule_job_polling(context, session.session_id, job)
+    with conversation_span(
+        "conversation.turn",
+        conversation_id,
+        session.session_id,
+        {
+            "channel_id": user_identity.get("channel_id"),
+            "user_id": user_identity.get("user_id"),
+            "aad_object_id": user_identity.get("aad_object_id"),
+            "message_length": len(incoming_text),
+            "attachment_count": len(captured_attachments),
+            "debug_requested": debug_requested,
+            "reset_requested": should_reset,
+        },
+    ):
+        log_conversation_event(
+            "conversation.inbound",
+            conversation_id,
+            session.session_id,
+            direction="inbound",
+            text=incoming_text,
+            attributes={"attachment_count": len(captured_attachments)},
+        )
+        log_conversation_event(
+            "maf.request",
+            conversation_id,
+            session.session_id,
+            direction="internal",
+            text=agent_input,
+        )
 
-    response_text = response.text
-    if _debug_enabled(session.session_id):
-        response_text += "\n\nDebug LLM prompt payload:\n```json\n" + _json(_llm_prompt_debug_payload(agent_input)) + "\n```"
+        before_job_ids = {job["id"] for job in _jobs_by_session.get(session.session_id, [])}
+        azure_openai_host = urlparse(config.azure_openai_endpoint).hostname or config.azure_openai_endpoint
+        with dependency_span(
+            "Azure OpenAI FutureCompleteAgent run",
+            conversation_id,
+            session.session_id,
+            {
+                "dependency.type": "Azure OpenAI",
+                "gen_ai.system": "azure_openai",
+                "gen_ai.operation.name": "responses",
+                "gen_ai.request.model": config.azure_openai_deployment_name,
+                "gen_ai.request.endpoint": config.azure_openai_endpoint,
+                "server.address": azure_openai_host,
+                "maf.agent.name": "FutureCompleteAgent",
+                "maf.session_id": session.session_id,
+                "llm.input_length": len(agent_input),
+            },
+        ) as llm_span:
+            response = await maf_agent.run(agent_input, session=session)
+            if llm_span is not None:
+                llm_span.set_attribute("llm.output_length", len(response.text or ""))
+        for job in _jobs_by_session.get(session.session_id, []):
+            if job["id"] not in before_job_ids:
+                job["conversation_id"] = conversation_id
+                log_conversation_event(
+                    "futurecomplete.job.created",
+                    conversation_id,
+                    session.session_id,
+                    attributes={"job_id": job.get("id"), "job_type": job.get("type"), "status": job.get("status")},
+                )
+                _schedule_job_polling(context, session.session_id, job)
 
-    await context.send_activity(response_text)
+        response_text = response.text
+        if _debug_enabled(session.session_id):
+            response_text += "\n\nDebug LLM prompt payload:\n```json\n" + _json(_llm_prompt_debug_payload(agent_input)) + "\n```"
+
+        log_conversation_event(
+            "conversation.outbound",
+            conversation_id,
+            session.session_id,
+            direction="outbound",
+            text=response_text,
+        )
+
+        await context.send_activity(response_text)
 
 @agent_app.error
 async def on_error(context: TurnContext, error: Exception):
@@ -1646,6 +1861,12 @@ async def on_error(context: TurnContext, error: Exception):
     #       application insights.
     print(f"\n [on_turn_error] unhandled error: {error}", file=sys.stderr)
     traceback.print_exc()
+    conversation_id = getattr(getattr(context.activity, "conversation", None), "id", None)
+    log_conversation_event(
+        "conversation.error",
+        conversation_id,
+        attributes={"error": str(error), "error_type": type(error).__name__},
+    )
 
     # Send a message to the user
     await context.send_activity("The agent encountered an error or bug.")

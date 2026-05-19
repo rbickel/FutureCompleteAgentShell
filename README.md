@@ -64,6 +64,40 @@ The tests and evaluations use `dataset_GKYZ_2016_AAPL_MSFT_trimmed.csv` as the s
 
 During an interactive conversation, type `debug` at any point to enable debug mode for that session. When a FutureComplete API call runs in debug mode, the agent shows request and response method, URL, headers, and body values. Uploaded dataset contents are still omitted from debug output and replaced with column/count metadata. Trial subscription creation returns the generated subscription key so it can be reused outside Teams, such as in a notebook.
 
+### Application Insights tracing
+
+Azure deployments provision a workspace-based Application Insights resource and set `APPLICATIONINSIGHTS_CONNECTION_STRING` on the App Service. Local and playground runs can opt in by setting the same environment variable before starting the agent.
+
+The agent traces each conversation turn with these custom dimensions:
+
+- `correlation_id`: the Microsoft 365 conversation ID.
+- `conversation_id`: the Microsoft 365 conversation ID.
+- `session_id`: the Microsoft Agent Framework session ID.
+- `event_name`: for example `conversation.inbound`, `maf.request`, `conversation.outbound`, `futurecomplete.api.request`, or `futurecomplete.api.response`.
+- `direction`: `inbound`, `outbound`, or `internal`.
+
+Outbound FutureComplete HTTP calls and the MAF-backed Azure OpenAI call are emitted as OpenTelemetry client spans so they appear in the Application Insights `dependencies` table and Transaction details. FutureComplete dependencies use type `HTTP`; LLM dependencies use type `GenAI | azure_openai` when Azure Monitor GenAI tracing is enabled.
+
+Use this KQL in Application Insights Logs to review one conversation:
+
+```kusto
+traces
+| where customDimensions.correlation_id == "<conversation-id>"
+| order by timestamp asc
+| project timestamp, message, event_name = customDimensions.event_name, direction = customDimensions.direction, session_id = customDimensions.session_id
+```
+
+Use this KQL to review outbound dependencies for the same conversation:
+
+```kusto
+dependencies
+| where customDimensions.correlation_id == "<conversation-id>"
+| order by timestamp asc
+| project timestamp, name, type, target, success, resultCode, session_id = customDimensions.session_id
+```
+
+OpenTelemetry spans use a deterministic trace ID derived from the conversation ID, while the raw conversation ID remains available as `customDimensions.correlation_id` for exact lookup.
+
 ## What's included in the template
 
 | Folder        | Contents                                     |

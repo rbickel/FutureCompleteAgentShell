@@ -8,7 +8,7 @@ param resourceBaseName string
 param azureOpenaiKey string
 param azureOpenaiModelDeploymentName string
 param azureOpenaiEndpoint string
-param futurecompleteApiBaseUrl string = 'https://inait-saas-apim-jjyzmt7v.azure-api.net'
+param futurecompleteApiBaseUrl string = 'https://api.forecasting.inait.ai'
 param futurecompleteDashboardUrl string = 'https://futurecomplete.inait.ai'
 param futurecompleteTrialUsersUrl string = 'https://api.forecasting.inait.ai/users/dev/users'
 param futurecompleteTrialPlanId string = 'trial'
@@ -25,12 +25,35 @@ param botDisplayName string
 param serverfarmsName string = resourceBaseName
 param webAppName string = resourceBaseName
 param identityName string = resourceBaseName
+param logAnalyticsWorkspaceName string = '${resourceBaseName}-logs'
+param applicationInsightsName string = '${resourceBaseName}-appi'
 param location string = resourceGroup().location
 param pythonVersion string = linuxFxVersion
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   location: location
   name: identityName
+}
+
+resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
+  name: logAnalyticsWorkspaceName
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: applicationInsightsName
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalyticsWorkspace.id
+  }
 }
 
 // Compute resources for your Web App
@@ -123,6 +146,14 @@ resource webApp 'Microsoft.Web/sites@2021-02-01' = {
           value: futurecompleteJobCancelPathTemplate
         }
         {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: applicationInsights.properties.ConnectionString
+        }
+        {
+          name: 'APPLICATIONINSIGHTS_ROLE_NAME'
+          value: webAppName
+        }
+        {
           name: 'BOT_TENANT_ID'
           value: identity.properties.tenantId
         }
@@ -163,3 +194,6 @@ output BOT_TENANT_ID string = identity.properties.tenantId
 output CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID string = identity.properties.clientId
 output CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE string = 'UserManagedIdentity'
 output CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID string = identity.properties.tenantId
+output APPLICATIONINSIGHTS_CONNECTION_STRING string = applicationInsights.properties.ConnectionString
+output APPLICATIONINSIGHTS_RESOURCE_ID string = applicationInsights.id
+output LOG_ANALYTICS_WORKSPACE_RESOURCE_ID string = logAnalyticsWorkspace.id
